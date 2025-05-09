@@ -106,9 +106,20 @@ int abilityDamage = 20;
 float abilityMultiplier = 1.0f;
 Ability abilities[18] = { 0 };
 Ability acquiredAbilities[18] = { 0 };
-bool resurrect = false;
 bool resurrected = false;
 float shootVelocity = 1.0f;
+bool hasResurrect = false; // ✔️
+bool hasDisparoMejorado = false;
+bool hasMovimientoAgil = false;
+bool hasRegeneracion = false;
+bool hasMultidisparo = false;
+bool hasAliado = false;
+bool hasTormentaDeBalas = false;
+bool hasBerserker = false;
+bool hasExplosion = false;
+bool hasImanDeOrbes = false;
+bool hasDisparoRapido = false;
+bool hasDesdeLaTumba = false; // ✔️
 
 //UI
 bool upgradeMenu = false;
@@ -299,7 +310,7 @@ static void UpdateDrawFrame(void)
     mousePosition = GetMousePosition();
     UpdateMusicStream(music);
 
-    if(player.health <= 0 && !resurrect) {
+    if(player.health <= 0 && !hasResurrect) {
         deathScreen = true;
     }
     if(player.experience >= player.level * 10) {
@@ -451,7 +462,7 @@ static void UpdateDrawFrame(void)
             player.maxHealth = 5;
             player.level = 1;
             player.experience = 0;
-            resurrect = false;
+            hasResurrect = false;
             resurrected = true;
             for(int i=0; i < MAX_ENEMIES; i++) {
                 enemies[i].enabled = false;
@@ -616,13 +627,14 @@ void ProjectileCollision(Projectile *projectiles, Enemy *enemies) {
                             orbsCount += 1;
                             orbsCollected++;
                             startEnemyAnimation(enemies[j].position, Amarillo);
-
-                            GenProjectiles(enemies[j].position, Vector2Add(enemies[j].position, (Vector2){ cosf(30 * DEG2RAD), sinf(30 * DEG2RAD) }), 1);
-                            projectilesCount++;
-                            GenProjectiles(enemies[j].position, Vector2Add(enemies[j].position, (Vector2){ cosf(150 * DEG2RAD), sinf(150 * DEG2RAD) }), 1);
-                            projectilesCount++;
-                            GenProjectiles(enemies[j].position, Vector2Add(enemies[j].position, (Vector2){ cosf(270 * DEG2RAD), sinf(270 * DEG2RAD) }), 1);
-                            projectilesCount++;
+                            if(hasDesdeLaTumba) {
+                                GenProjectiles(enemies[j].position, Vector2Add(enemies[j].position, (Vector2){ cosf(30 * DEG2RAD), sinf(30 * DEG2RAD) }), 1);
+                                projectilesCount++;
+                                GenProjectiles(enemies[j].position, Vector2Add(enemies[j].position, (Vector2){ cosf(150 * DEG2RAD), sinf(150 * DEG2RAD) }), 1);
+                                projectilesCount++;
+                                GenProjectiles(enemies[j].position, Vector2Add(enemies[j].position, (Vector2){ cosf(270 * DEG2RAD), sinf(270 * DEG2RAD) }), 1);
+                                projectilesCount++;
+                            }
                             enemies[j].position = (Vector2){ -100000, -100000 };
                         }
                     }
@@ -637,14 +649,14 @@ void PlayerTakeDamage(int damage) {
     player.health -= damage;
     if (player.health <= 0) {
         player.health = 0;
-        if(resurrect && !resurrected) {
+        if(hasResurrect && !resurrected) {
             // Resucitar al jugador
             player.position = (Vector2){ 0, 0 };
             player.health = 5;
             player.maxHealth = 5;
             player.level = 1;
             player.experience = 0;
-            resurrect = false;
+            hasResurrect = false;
             resurrected = true;
             for(int i=0; i < MAX_ENEMIES; i++) {
                 enemies[i].enabled = false;
@@ -725,13 +737,14 @@ void enemyTrigger(Enemy *enemies, Vector2 position) {
                     GenOrbs(enemies[i].position, 1);
                     orbsCount += 1;
                     orbsCollected++;
-
-                    GenProjectiles(enemies[i].position, Vector2Add(enemies[i].position, (Vector2){ cosf(30 * DEG2RAD), sinf(30 * DEG2RAD) }), 1);
-                    projectilesCount++;
-                    GenProjectiles(enemies[i].position, Vector2Add(enemies[i].position, (Vector2){ cosf(150 * DEG2RAD), sinf(150 * DEG2RAD) }), 1);
-                    projectilesCount++;
-                    GenProjectiles(enemies[i].position, Vector2Add(enemies[i].position, (Vector2){ cosf(270 * DEG2RAD), sinf(270 * DEG2RAD) }), 1);
-                    projectilesCount++;
+                    if(hasDesdeLaTumba) {
+                        GenProjectiles(enemies[i].position, Vector2Add(enemies[i].position, (Vector2){ cosf(30 * DEG2RAD), sinf(30 * DEG2RAD) }), 1);
+                        projectilesCount++;
+                        GenProjectiles(enemies[i].position, Vector2Add(enemies[i].position, (Vector2){ cosf(150 * DEG2RAD), sinf(150 * DEG2RAD) }), 1);
+                        projectilesCount++;
+                        GenProjectiles(enemies[i].position, Vector2Add(enemies[i].position, (Vector2){ cosf(270 * DEG2RAD), sinf(270 * DEG2RAD) }), 1);
+                        projectilesCount++;
+                    }
                     enemies[i].position = (Vector2){ -100000, -100000 };
                 }
             }
