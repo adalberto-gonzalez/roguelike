@@ -15,6 +15,7 @@
 #define MAX_PROJECTILES 256
 #define PROJECTILE_RADIUS 5.0f
 #define PROJECTILE_SPEED 4.0f
+#define MAX_EN_ANI 64
 
 const Color Naranja = (Color){ 255, 111, 0, 255 }; // Ensure this color is correctly initialized
 const Color RojoOscuro = (Color) { 198, 18, 0, 255 };
@@ -67,6 +68,15 @@ typedef struct Ability {
     const char *description;
 } Ability;
 
+typedef struct Animation {
+    Vector2 position;
+    int currentFrame;
+    int frames;
+    float elapsedTime;
+    bool active;
+    Color tint;
+} Animation;
+
 //----------------------------------------------------------------------------------
 // Variables
 //----------------------------------------------------------------------------------
@@ -81,8 +91,10 @@ Enemy enemies[MAX_ENEMIES] = { 0 };
 int enemiesCount = 0;
 Projectile projectiles[MAX_PROJECTILES] = { 0 };
 int projectilesCount = 0;
+Animation enemyAnimations[MAX_EN_ANI] = { 0 };
+int enemyAnimationsCount = 0;
 
-// Statistics
+// Estadisticas
 int enemiesKilled = 0;
 int orbsCollected = 0;
 int projectilesFired = 0;
@@ -110,6 +122,7 @@ Texture2D crosshair;
 Texture2D uiCorner;
 Texture2D bullet;
 Texture2D saw;
+Texture2D skullSmoke[6];
 
 // Sound & Music
 Music music = { 0 };
@@ -136,6 +149,8 @@ void enemyTrigger(Enemy *enemies, Vector2 position);
 void ally(Enemy *enemies);
 void enableUpgradeMenu();
 void disableUpgradeMenu();
+void UpdateDrawAnimations(Animation *animations, int amount, Texture2D textures[]);
+void startEnemyAnimation(Vector2 position, Color tint);
 //----------------------------------------------------------------------------------
 // Main
 //----------------------------------------------------------------------------------
@@ -210,6 +225,12 @@ int main()
     bullet = LoadTexture("textures/bullet.png");
     saw = LoadTexture("textures/saw.png");
 
+    for (int i = 0; i < (sizeof(skullSmoke) / sizeof(skullSmoke[0])); i++)
+    {
+        skullSmoke[i] = LoadTexture(TextFormat("textures/Skull_Smoke/%d.png", i+1));
+    }
+    
+
     // Carga de sonidos
     music = LoadMusicStream("sound/ganymede.ogg");
     shoot = LoadSound("sound/shoot.ogg");
@@ -235,6 +256,14 @@ int main()
         projectiles[i].radius = PROJECTILE_RADIUS;
         projectiles[i].speed = PROJECTILE_SPEED;
         projectiles[i].enabled = false;
+    }
+    for (int i = 0; i < MAX_EN_ANI; i++) {
+        enemyAnimations[i].position = (Vector2){ -100000, -100000 };
+        enemyAnimations[i].currentFrame = 0;
+        enemyAnimations[i].frames = 6;
+        enemyAnimations[i].elapsedTime = 0.0f;
+        enemyAnimations[i].active = false;
+        enemyAnimations[i].tint = WHITE;
     }
 
     camera.target = (Vector2){ player.position.x, player.position.y };
@@ -337,6 +366,7 @@ static void UpdateDrawFrame(void)
 
         if(!upgradeMenu && !deathScreen) {
             UpdateProjectiles(projectiles, MAX_PROJECTILES);
+            UpdateDrawAnimations(enemyAnimations, MAX_EN_ANI, skullSmoke);
             // Collision logic
             OrbCollision(orbs);
             EnemyCollision(enemies);
@@ -585,6 +615,7 @@ void ProjectileCollision(Projectile *projectiles, Enemy *enemies) {
                             GenOrbs(enemies[j].position, 1);
                             orbsCount += 1;
                             orbsCollected++;
+                            startEnemyAnimation(enemies[j].position, Amarillo);
 
                             GenProjectiles(enemies[j].position, Vector2Add(enemies[j].position, (Vector2){ cosf(30 * DEG2RAD), sinf(30 * DEG2RAD) }), 1);
                             projectilesCount++;
@@ -842,4 +873,44 @@ void enableUpgradeMenu() {
 }
 void disableUpgradeMenu() {
     upgradeMenu = false;
+}
+
+void UpdateDrawAnimations(Animation *animations, int amount, Texture2D textures[]) {
+    for (int i = 0; i < amount; i++) {
+        if (animations[i].active) {
+            animations[i].elapsedTime += GetFrameTime();
+            
+            if (animations[i].elapsedTime >= 0.03f) {
+                animations[i].currentFrame++;
+                animations[i].elapsedTime = 0.0f;
+                
+                if (animations[i].currentFrame >= animations[i].frames) {
+                    animations[i].active = false;
+                    animations[i].currentFrame = 0;
+                }
+            }
+            
+            if (animations[i].active) {
+                DrawTexture(textures[animations[i].currentFrame], 
+                           animations[i].position.x - textures[animations[i].currentFrame].width / 2, 
+                           animations[i].position.y - textures[animations[i].currentFrame].height / 2, 
+                           animations[i].tint);
+            }
+        }
+    }
+}
+
+void startEnemyAnimation(Vector2 position, Color tint) {
+    if(enemyAnimationsCount >= MAX_EN_ANI) {
+        enemyAnimationsCount = 0;
+    }
+    for (int i = 0; i < MAX_EN_ANI; i++) {
+        if (!enemyAnimations[i].active) {
+            enemyAnimations[i].position = position;
+            enemyAnimations[i].currentFrame = 0;
+            enemyAnimations[i].elapsedTime = 0.0f;
+            enemyAnimations[i].active = true;
+            enemyAnimations[i].tint = tint;
+        }
+    }
 }
