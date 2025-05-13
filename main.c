@@ -12,10 +12,10 @@
 #define ORB_RADIUS 70.0f
 #define MAX_ENEMIES 256
 #define ENEMY_RADIUS 15.0f
-#define MAX_PROJECTILES 256
+#define MAX_PROJECTILES 32
 #define PROJECTILE_RADIUS 5.0f
 #define PROJECTILE_SPEED 4.0f
-#define MAX_EN_ANI 64
+#define MAX_ANIMATIONS 32
 
 const Color Naranja = (Color){ 255, 111, 0, 255 }; // Ensure this color is correctly initialized
 const Color RojoOscuro = (Color) { 198, 18, 0, 255 };
@@ -69,12 +69,14 @@ typedef struct Ability {
 } Ability;
 
 typedef struct Animation {
+    Texture2D textures[32];
     Vector2 position;
     int currentFrame;
     int frames;
     float elapsedTime;
     bool active;
     Color tint;
+    float size;
 } Animation;
 
 //----------------------------------------------------------------------------------
@@ -84,15 +86,29 @@ Camera2D camera = { 0 };
 Player player = { 0 };
 Vector2 squarePosition = { 0 };
 Vector2 mousePosition = (Vector2){ 0 };
-float radiusMultiplier = 1.0f;
 Orb orbs[MAX_ORBS] = { 0 };
 int orbsCount = 0;
 Enemy enemies[MAX_ENEMIES] = { 0 };
 int enemiesCount = 0;
 Projectile projectiles[MAX_PROJECTILES] = { 0 };
 int projectilesCount = 0;
-Animation enemyAnimations[MAX_EN_ANI] = { 0 };
+float timer = 0.0f;
+float totalGameTime = 0.0f;
+float timeSinceLastClick = 0.0f;
+float SpawnTimer = 0.0f;
+float furiaTimer = 0.0f;
+float regenTimer = 0.0f;
+float stormTimer = 0.0f;
+bool debug = false;
+
+// Animaciones
+Animation enemyAnimations[MAX_ANIMATIONS] = { 0 };
 int enemyAnimationsCount = 0;
+Animation explotionAnim[MAX_ANIMATIONS] = { 0 };
+int explotionAnimCount = 0;
+Animation lotusAnimation;
+Animation demAnim[MAX_ENEMIES] = {0};
+int demAnimCount = 0;
 
 // Estadisticas
 int enemiesKilled = 0;
@@ -104,6 +120,13 @@ int projectilesHit = 0;
 bool selectedIndex = false;
 int abilityDamage = 20;
 float abilityMultiplier = 1.0f;
+float radiusMultiplier = 1.0f;
+float currentSpeed = 1.0f;
+int currentDamage = 10;
+bool furiaActive = false;
+int explotionDamage = 30;
+float explotionRadius = 12.0f; //Multiplicado por player.radius
+float corazonFracturadoMultiplier = 20.0f;
 Ability abilities[18] = { 0 };
 Ability acquiredAbilities[18] = { 0 };
 bool resurrected = false;
@@ -111,29 +134,38 @@ float shootVelocity = 1.0f;
 bool hasResurrect = false; // ✔️
 bool hasDisparoMejorado = false;
 bool hasMovimientoAgil = false;
-bool hasRegeneracion = false;
-bool hasMultidisparo = false;
-bool hasAliado = false;
-bool hasTormentaDeBalas = false;
-bool hasBerserker = false;
-bool hasExplosion = false;
-bool hasImanDeOrbes = false;
-bool hasDisparoRapido = false;
-bool hasDesdeLaTumba = false; // ✔️
+bool hasRegeneracion = false; // ✔️
+bool hasBifurcacion = false; // ✔️
+bool hasAliado = false; // ✔️
+bool hasTormentaDeBalas = false; // ✔️
+bool hasFuria = false; // ✔️
+bool hasExplosion = false; // ✔️
+bool hasImanDeOrbes = false; // ✔️
+bool hasDisparoRapido = false; // ✔️
+bool hasAlmasErrantes = false; // ✔️
+bool hasSierraGiratoria = false; // ✔️
+bool hasCorazonFracturado = false; // ✔️
 
 //UI
 bool upgradeMenu = false;
 bool deathScreen = false;
+bool menuActive = false;
 int selectedAbility = 0;
 int index[3] = { 0 };
 
 // Textures
+Texture2D healthBar;
 Texture2D noiseTexture;
 Texture2D crosshair;
 Texture2D uiCorner;
 Texture2D bullet;
 Texture2D saw;
+Texture2D xpSection;
+Texture2D xpBar;
 Texture2D skullSmoke[6];
+Texture2D explotion[6];
+Texture2D lotus[12];
+Texture2D dem[8];
 
 // Sound & Music
 Music music = { 0 };
@@ -152,7 +184,8 @@ void DrawProjectiles(Projectile *projectiles, int amount);
 void OrbCollision(Orb *orbs);
 void EnemyCollision(Enemy *enemies);
 void ProjectileCollision(Projectile *projectiles, Enemy *enemies);
-void PlayerTakeDamage(int damage);
+void PlayerTakeDamage(int damage, Enemy *enemies);
+void EnemyTakeDamage(Enemy *enemy, int damage);
 void PushEnemiesAway(Enemy *enemies);
 void enemiesSpawn(Enemy *enemies);
 void UpdateProjectiles(Projectile *projectiles, int amount);
@@ -162,6 +195,13 @@ void enableUpgradeMenu();
 void disableUpgradeMenu();
 void UpdateDrawAnimations(Animation *animations, int amount, Texture2D textures[]);
 void startEnemyAnimation(Vector2 position, Color tint);
+void startAnimation(Animation *animations, Vector2 position, Color tint, int count, float size);
+void UpdateAnimation(Animation *animation);
+void singleAnimation(Animation *animation, Texture2D textures[], Vector2 position, Color tint, int count, float size);
+void setAbilityStatus(int abilityIndex, bool status);
+bool getAbilityStatus(int abilityIndex);
+void DrawDebugInfo();
+
 //----------------------------------------------------------------------------------
 // Main
 //----------------------------------------------------------------------------------
@@ -187,46 +227,69 @@ int main()
     player.level = 1;
     player.experience = 0;
     player.maxHealth = 5;
+    currentSpeed = player.speed;
+    currentDamage = player.damage;
 
     // Habilidades
     abilities[0].icon = LoadTexture("textures/ability1.png");
-    abilities[0].name = "Resurrect";
+    abilities[0].name = "Eco de la Muerte";
     abilities[0].description = "Resucita al morir";
+
     abilities[1].icon = LoadTexture("textures/ability2.png");
     abilities[1].name = "Disparo Mejorado";
-    abilities[1].description = "Incrementa el daño un 10%%";
+    abilities[1].description = "Incrementa el daño un 20%%";
+
     abilities[2].icon = LoadTexture("textures/ability3.png");
     abilities[2].name = "Movimiento Agil";
-    abilities[2].description = "Incrementa la velocidad un 10%%";
+    abilities[2].description = "Incrementa la velocidad un 20%%";
+    
     abilities[3].icon = LoadTexture("textures/ability4.png");
     abilities[3].name = "Regeneración";
-    abilities[3].description = "Cura 1 vida cada 2 minutos";
+    abilities[3].description = "Cada 60s emites un latido restaurador que cura 1 de vida.";
+
     abilities[4].icon = LoadTexture("textures/ability5.png");
-    abilities[4].name = "Multidisparo";
-    abilities[4].description = "Dispara un proyectil extra";
+    abilities[4].name = "Bifurcación Arcana";
+    abilities[4].description = "Despliegas un disparo espejo.";
+
     abilities[5].icon = LoadTexture("textures/ability6.png");
-    abilities[5].name = "Mejores amigos";
-    abilities[5].description = "Invoca un aliado que dispara un \nproyectil cada 0.5 segundos";
+    abilities[5].name = "Heraldos de Acero";
+    abilities[5].description = "Convocas un aliado mecánico que abre fuego cada 0.5 s.";
+
     abilities[6].icon = LoadTexture("textures/ability7.png");
     abilities[6].name = "Tormenta de Balas";
-    abilities[6].description = "Dispara 6 proyectiles en todas \ndirecciones cada 3 segundos";
+    abilities[6].description = "Cada 3s desatas una ráfaga en seis direcciones.";
+
     abilities[7].icon = LoadTexture("textures/ability8.png");
-    abilities[7].name = "Berserker";
-    abilities[7].description = "Incrementa el daño un 50%% y la \nvelocidad un 25%% durante 30 segundos después de recibir daño";
+    abilities[7].name = "Furia Incontenible";
+    abilities[7].description = "Al recibir daño, te transformas: +50% daño y +25% velocidad por 15s.";
+
     abilities[8].icon = LoadTexture("textures/ability9.png");
-    abilities[8].name = "Explosión";
-    abilities[8].description = "Causa 10 de daño a todos los enemigos \ncercanos al recibir daño";
+    abilities[8].name = "Venganza Explosiva";
+    abilities[8].description = "Cuando te hieren, desatas una explosión que inflige 30 de daño a los cercanos.";
+
     abilities[9].icon = LoadTexture("textures/ability10.png");
     abilities[9].name = "Iman de Orbes";
-    abilities[9].description = "Aumenta el rango de recogida de orbes un 25%%";
+    abilities[9].description = "Tu campo de recolección de orbes se expande un 25%%";
+
     abilities[10].icon = LoadTexture("textures/ability11.png");
     abilities[10].name = "Disparo Rápido";
     abilities[10].description = "Incrementa la velocidad de disparo un 25%%";
+
     abilities[11].icon = LoadTexture("textures/ability12.png");
-    abilities[11].name = "Desde la tumba";
+    abilities[11].name = "Almas Errantes";
     abilities[11].description = "Los enemigos muertos disparan 3 \nproyectiles al morir";
+    
+    abilities[12].icon = LoadTexture("textures/ability13.png");
+    abilities[12].name = "Molinete de Hierro";
+    abilities[12].description = "Una sierra giratoria rodea tu figura, destrozando a los enemigos cercanos.";
+
+    abilities[13].icon = LoadTexture("textures/ability14.png");
+    abilities[13].name = "Corazón Fracturado";
+    abilities[13].description = "Cuando tu salud es baja, tus disparos explotan al impacto dañando todo a tu alrededor.";
+
 
     InitWindow(screenWidth, screenHeight, "Roguelike");
+    //ToggleFullscreen();
     InitAudioDevice();
 
     // Carga de texturas
@@ -235,12 +298,20 @@ int main()
     uiCorner = LoadTexture("textures/ui_corner.png");
     bullet = LoadTexture("textures/bullet.png");
     saw = LoadTexture("textures/saw.png");
+    healthBar = LoadTexture("textures/h_bar.png");
+    xpSection = LoadTexture("textures/XpSection.png");
+    xpBar = LoadTexture("textures/XpBar.png");
 
-    for (int i = 0; i < (sizeof(skullSmoke) / sizeof(skullSmoke[0])); i++)
-    {
+    for (int i=0; i <= 6; i++){
         skullSmoke[i] = LoadTexture(TextFormat("textures/Skull_Smoke/%d.png", i+1));
+        explotion[i] = LoadTexture(TextFormat("textures/Explotion/%d.png", i+1));
     }
-    
+    for (int i=0; i <= 12; i++){
+        lotus[i] = LoadTexture(TextFormat("textures/lotus/%d.png", i+1));
+    }
+    for (int i=0; i <= 8; i++){
+        dem[i] = LoadTexture(TextFormat("textures/dem/%d.png", i+1));
+    }
 
     // Carga de sonidos
     music = LoadMusicStream("sound/ganymede.ogg");
@@ -268,14 +339,40 @@ int main()
         projectiles[i].speed = PROJECTILE_SPEED;
         projectiles[i].enabled = false;
     }
-    for (int i = 0; i < MAX_EN_ANI; i++) {
+    for (int i = 0; i < MAX_ANIMATIONS; i++) {
         enemyAnimations[i].position = (Vector2){ -100000, -100000 };
         enemyAnimations[i].currentFrame = 0;
         enemyAnimations[i].frames = 6;
         enemyAnimations[i].elapsedTime = 0.0f;
         enemyAnimations[i].active = false;
         enemyAnimations[i].tint = WHITE;
+        enemyAnimations[i].size = 1.0f;
     }
+    for (int i = 0; i < MAX_ANIMATIONS; i++) {
+        explotionAnim[i].position = (Vector2){ -100000, -100000 };
+        explotionAnim[i].currentFrame = 0;
+        explotionAnim[i].frames = 6;
+        explotionAnim[i].elapsedTime = 0.0f;
+        explotionAnim[i].active = false;
+        explotionAnim[i].tint = WHITE;
+        explotionAnim[i].size = 1.0f;
+    }
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        demAnim[i].position = (Vector2){ -100000, -100000 };
+        demAnim[i].currentFrame = 0;
+        demAnim[i].frames = 6;
+        demAnim[i].elapsedTime = 0.0f;
+        demAnim[i].active = false;
+        demAnim[i].tint = WHITE;
+        demAnim[i].size = 1.0f;
+    }
+    lotusAnimation.position = (Vector2){ -100000, -100000 };
+    lotusAnimation.currentFrame = 0;
+    lotusAnimation.frames = 12;
+    lotusAnimation.elapsedTime = 0.0f;
+    lotusAnimation.active = false;
+    lotusAnimation.tint = WHITE;
+    lotusAnimation.size = 1.0f;
 
     camera.target = (Vector2){ player.position.x, player.position.y };
     camera.offset = (Vector2){ (float)screenWidth/2.0f, (float)screenHeight/2.0f };
@@ -293,8 +390,10 @@ int main()
     CloseAudioDevice();           // Close audio device
     UnloadMusicStream(music); // Unload music stream
     UnloadTexture(noiseTexture); // Unload texture
-    UnloadTexture(crosshair); // Unload texture
-    UnloadTexture(uiCorner); // Unload texture
+    UnloadTexture(crosshair);
+    UnloadTexture(uiCorner);
+    UnloadTexture(healthBar);
+    UnloadTexture(saw);
 
     return 0;
 }
@@ -310,49 +409,125 @@ static void UpdateDrawFrame(void)
     mousePosition = GetMousePosition();
     UpdateMusicStream(music);
 
-    if(player.health <= 0 && !hasResurrect) {
+    if(player.health <= 0 || (!hasResurrect && resurrected)) {
         deathScreen = true;
+        menuActive = true;
     }
     if(player.experience >= player.level * 10) {
         player.level += 1;
         player.experience = 0;
         upgradeMenu = true;
+        menuActive = true;
     }
 
     // Timers
-    static float timer = 0.0f;
-    static float totalGameTime = 0.0f;
-    static float timeSinceLastClick = 0.0f;
-    static float SpawnTimer = 0.0f;
     timeSinceLastClick += GetFrameTime();
     totalGameTime += GetFrameTime();
     timer += GetFrameTime();
-    SpawnTimer += GetFrameTime();
+    SpawnTimer += GetFrameTime() * (2.5f * log(0.8f * totalGameTime/60.0f + 1.0f) + 1.0f);
     
-    if (timer >= 0.5f) {
+    if (timer >= 0.5f && hasAliado) {
         timer = 0.0f;
         ally(enemies);
     }
 
     // Spawner
-    if (SpawnTimer >= (-0.195*SpawnTimer)+1 && (-0.195*SpawnTimer)+1 > 0) {
-        SpawnTimer = 0.0f;
-        enemiesSpawn(enemies);
-        enemiesSpawn(enemies);
-        enemiesCount += 2;
+    if (SpawnTimer >= 1.0f && !menuActive) {
+        int enemies_to_spawn = (int)SpawnTimer;
+        SpawnTimer -= enemies_to_spawn;
+        
+        for (int i = 0; i < enemies_to_spawn; ++i) {
+            enemiesSpawn(enemies);
+            enemiesCount += 1;
+        }
     }
 
-    if(IsMouseButtonPressed(MOUSE_RIGHT_BUTTON) && !upgradeMenu && !deathScreen) {
+    // Furia Upgrade
+    if(furiaActive && furiaTimer <= 15.0f) {
+        player.speed = currentSpeed * 1.25f;
+        player.damage = currentDamage * 2;
+        furiaTimer += GetFrameTime();
+    }else{
+        furiaActive = false;
+            player.speed = currentSpeed;
+            player.damage = currentDamage;
+            furiaTimer = 0.0f;
+    }
+
+    // Iman Upgrade
+    if (hasImanDeOrbes) {
+        radiusMultiplier += radiusMultiplier*0.25f;
+        hasImanDeOrbes = false;
+    }
+    for (int i = 0; i < MAX_ORBS; i++) {
+        orbs[i].radius = ORB_RADIUS * radiusMultiplier;
+    }
+
+    // Regen Upgrade
+    if (hasRegeneracion){
+        regenTimer += GetFrameTime();
+        if(regenTimer >= 60.0f){
+            regenTimer = 0;
+            if (player.health < player.maxHealth){ 
+                player.health++;
+                singleAnimation(&lotusAnimation, lotus, player.position, GREEN, 1, 1.6f);
+            }
+        }
+    }
+
+    // Rafaga
+    if (hasTormentaDeBalas){
+        stormTimer += GetFrameTime();
+        if(stormTimer >= 3.0f){
+            stormTimer = 0;
+            GenProjectiles(player.position, Vector2Add(player.position, (Vector2){ cosf(360 * DEG2RAD), sinf(0 * DEG2RAD) }), 1);
+            projectilesCount++;
+            GenProjectiles(player.position, Vector2Add(player.position, (Vector2){ cosf(60 * DEG2RAD), sinf(60 * DEG2RAD) }), 1);
+            projectilesCount++;
+            GenProjectiles(player.position, Vector2Add(player.position, (Vector2){ cosf(120 * DEG2RAD), sinf(120 * DEG2RAD) }), 1);
+            projectilesCount++;
+            GenProjectiles(player.position, Vector2Add(player.position, (Vector2){ cosf(180 * DEG2RAD), sinf(180 * DEG2RAD) }), 1);
+            projectilesCount++;
+            GenProjectiles(player.position, Vector2Add(player.position, (Vector2){ cosf(240 * DEG2RAD), sinf(240 * DEG2RAD) }), 1);
+            projectilesCount++;
+            GenProjectiles(player.position, Vector2Add(player.position, (Vector2){ cosf(300 * DEG2RAD), sinf(300 * DEG2RAD) }), 1);
+            projectilesCount++;
+        }
+    }
+
+    if(hasDisparoRapido){
+        shootVelocity += shootVelocity*0.25f;
+        hasDisparoRapido = false;
+    }
+
+    if(IsKeyPressed(KEY_GRAVE)){
+        debug = !debug;
+    }
+
+    if(IsMouseButtonPressed(MOUSE_RIGHT_BUTTON) && !menuActive && debug) {
         if (enemiesCount < MAX_ENEMIES) {
             GenOrbs(GetScreenToWorld2D(mousePosition, camera), 1);
             orbsCount++;
         }
     }
-    if(IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && timeSinceLastClick >= 0.3f*shootVelocity && !upgradeMenu && !deathScreen) {
+    if(IsMouseButtonPressed(MOUSE_LEFT_BUTTON) && timeSinceLastClick >= 0.3f/shootVelocity && !menuActive) {
         timeSinceLastClick = 0.0f;
         if (projectilesCount < MAX_PROJECTILES) {
             GenProjectiles(player.position, GetScreenToWorld2D(mousePosition, camera), 1);
             projectilesCount++;
+            if(hasBifurcacion){
+                float angle = atan2f(
+                    GetScreenToWorld2D(mousePosition, camera).y - player.position.y,
+                    GetScreenToWorld2D(mousePosition, camera).x - player.position.x
+                );
+                float angle_offset = angle + 5.0f * DEG2RAD;
+                Vector2 bifurcatedTarget = {
+                    player.position.x + cosf(angle_offset) * 100.0f,
+                    player.position.y + sinf(angle_offset) * 100.0f
+                };
+                GenProjectiles(player.position, bifurcatedTarget, 1);
+                projectilesCount++;
+            }
             PlaySound(shoot);
         }else{
             projectilesCount = 0;
@@ -369,15 +544,17 @@ static void UpdateDrawFrame(void)
 
         //Player
         DrawRectangleRounded((Rectangle){ player.position.x - 10.0f, player.position.y - 20.0f, 20, 40 }, 1.0f, 10, Naranja);
-        DrawRing((Vector2){ player.position.x, player.position.y }, player.radius - 2, player.radius, 0, 360, 32, VerdeOscuro);
-        
+        if(debug) DrawRing((Vector2){ player.position.x, player.position.y }, player.radius - 2, player.radius, 0, 360, 32, VerdeOscuro);
         DrawOrbs(orbs, MAX_ORBS);
         DrawEnemies(enemies, MAX_ENEMIES);
         DrawProjectiles(projectiles, MAX_PROJECTILES);
 
-        if(!upgradeMenu && !deathScreen) {
+        if(!menuActive) {
             UpdateProjectiles(projectiles, MAX_PROJECTILES);
-            UpdateDrawAnimations(enemyAnimations, MAX_EN_ANI, skullSmoke);
+            UpdateDrawAnimations(enemyAnimations, MAX_ANIMATIONS, skullSmoke);
+            UpdateDrawAnimations(explotionAnim, MAX_ANIMATIONS, explotion);
+            UpdateDrawAnimations(demAnim, MAX_ENEMIES, dem);
+            UpdateAnimation(&lotusAnimation);
             // Collision logic
             OrbCollision(orbs);
             EnemyCollision(enemies);
@@ -387,15 +564,15 @@ static void UpdateDrawFrame(void)
             if(IsKeyDown(KEY_A)) direction.x -= player.speed * player.acceleration;
             if(IsKeyDown(KEY_D)) direction.x += player.speed * player.acceleration;
             Vector2Normalize(direction);
-            player.position.x = Clamp(player.position.x, -5000.0f, 5000.0f);
-            player.position.y = Clamp(player.position.y, -5000.0f, 5000.0f);
+            player.position.x = Clamp(player.position.x, -2500.0f, 2500.0f);
+            player.position.y = Clamp(player.position.y, -2500.0f, 2500.0f);
             player.position = Vector2Add(player.position, direction);
         }
 
         // limit
-        DrawRectangleLines(-5000, -5000, 10000, 10000, RojoOscuro);
+        DrawRectangleLines(-2500, -2500, 5000, 5000, RojoOscuro);
         
-        if(1){
+        if(!menuActive && hasSierraGiratoria) {
             static float rotationAngle = 0.0f;
             rotationAngle += 1.0f * 3.0f;
 
@@ -423,6 +600,29 @@ static void UpdateDrawFrame(void)
         // UI
     //-----------------------------------------------------------------------------------
 
+    for(int i=0; i<player.maxHealth; i++){
+        if(player.health > i){
+            int r = 255 - (i * 25);
+            if (r < 0) r = 0;
+            DrawTextureEx(healthBar, (Vector2){17 + i*30, 10}, 0.0f, 3.0f, (Color){ r, 0, 0, 255 });
+        }else{
+            int r = 110 - (i * 10);
+            int g = 120 - (i * 10);
+            int b = 120 - (i * 10);
+            if (r < 0) r = 0;
+            if (g < 0) g = 0;
+            if (b < 0) b = 0;
+            DrawTextureEx(healthBar, (Vector2){17 + i*30, 10}, 0.0f, 3.0f, (Color){ r, g, b, 255 });
+        }
+    }
+
+    DrawTextureEx(xpBar, (Vector2){10, 40}, 0.0f, 3.0f, WHITE);
+    for(int i=0; i<10; i++){
+        if(player.experience/player.level > i+1){
+            DrawTextureEx(xpSection, (Vector2){13 + i*12, 43}, 0.0f, 3.0f, WHITE);
+        }
+    }
+    
     if(upgradeMenu) {
         enableUpgradeMenu();
     }else {
@@ -434,20 +634,9 @@ static void UpdateDrawFrame(void)
         (Vector2){ 0, 0 }, 0.0f,
         Fade(WHITE, 0.15f)
     );
-    DrawText(TextFormat("Exp:%d ", player.experience), 10, 30, 20, Amarillo);
-    DrawText(TextFormat("Level:%d ", player.level), 10, 60, 20, Amarillo);
-    DrawText(TextFormat("Health:%d ", player.health), 10, 90, 20, Amarillo);
-    DrawText(TextFormat("x:%.0f, y:%.0f ", player.position.x, player.position.y), 10, 120, 20, Amarillo);
-    DrawText(TextFormat("Projectiles:%d ", projectilesCount), 10, 150, 20, Amarillo);
-    DrawText(TextFormat("Enemies:%d ", enemiesCount), 10, 180, 20, Amarillo);
-    DrawText(TextFormat("Orbs:%d ", orbsCount), 10, 210, 20, Amarillo);
-    int seconds = (int)totalGameTime;
-    if (seconds > 60) {
-        seconds = seconds % 60;
-    }
-    DrawText(TextFormat("%2.0f:%2.0f", totalGameTime/60.0f, seconds), 10, 240, 20, Amarillo);
     
     DrawTexture(crosshair, mousePosition.x - crosshair.width/2, mousePosition.y - crosshair.height/2, RojoOscuro);
+    if(debug) DrawDebugInfo();
 
     // Death screen
     if(deathScreen) {
@@ -455,6 +644,10 @@ static void UpdateDrawFrame(void)
         DrawRectangleRounded((Rectangle){ GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 250, 400, 500 }, 0.1f, 10, Amarillo);
         DrawText("YOU DIED", GetScreenWidth()/2 - MeasureText("YOU DIED", 20)/2, GetScreenHeight()/2 - 200 + 20, 20, AzulOscuro);
         DrawText("Press R to respawn", GetScreenWidth()/2 - MeasureText("Press R to respawn", 20)/2, GetScreenHeight()/2 - 200 + 60, 20, AzulOscuro);
+        DrawText(TextFormat("Enemigos eliminados: %d", enemiesKilled), GetScreenWidth()/2 - 150, GetScreenHeight()/2 - 200 + 120, 20, AzulOscuro);
+        DrawText(TextFormat("Orbes recogidos: %d", orbsCollected), GetScreenWidth()/2 - 150, GetScreenHeight()/2 - 200 + 150, 20, AzulOscuro);
+        DrawText(TextFormat("Proyectiles disparados: %d", projectilesFired), GetScreenWidth()/2 - 150, GetScreenHeight()/2 - 200 + 180, 20, AzulOscuro);
+        DrawText(TextFormat("Proyectiles acertados: %d", projectilesHit), GetScreenWidth()/2 - 150, GetScreenHeight()/2 - 200 + 210, 20, AzulOscuro);
         if (IsKeyPressed(KEY_R)) {
             deathScreen = false;
             player.position = (Vector2){ 0, 0 };
@@ -462,8 +655,6 @@ static void UpdateDrawFrame(void)
             player.maxHealth = 5;
             player.level = 1;
             player.experience = 0;
-            hasResurrect = false;
-            resurrected = true;
             for(int i=0; i < MAX_ENEMIES; i++) {
                 enemies[i].enabled = false;
                 enemies[i].position = (Vector2){ -100000, -100000 };
@@ -480,10 +671,10 @@ static void UpdateDrawFrame(void)
             projectilesCount = 0;
             orbsCount = 0;
             upgradeMenu = false;
+            menuActive = false;
         }
     }
 
-    DrawFPS(10, 10);
     EndDrawing();
     //----------------------------------------------------------------------------------
 }
@@ -512,9 +703,9 @@ void GenEnemies(Vector2 position, int amount) {
             position.y += distance
         };
         enemies[i].radius = ENEMY_RADIUS;
-        enemies[i].health = 50;
-        enemies[i].maxHealth = 50;
-        enemies[i].speed = 2.0f;
+        enemies[i].health = 30;
+        enemies[i].maxHealth = 30;
+        enemies[i].speed = 1.35f;
         enemies[i].enabled = true;
     }
 }
@@ -530,9 +721,6 @@ void GenProjectiles(Vector2 position, Vector2 direction, int amount) {
         }else{
             projectilesCount = 0;
         }
-        
-
-        //Calcular direccion
         projectiles[i].direction = Vector2Normalize(Vector2Subtract(direction, projectiles[i].position));
     }
 }
@@ -541,16 +729,17 @@ void DrawOrbs(Orb *orbs, int amount) {
     for (int i = 0; i < amount; i++) {
         if(orbs[i].enabled){
             DrawCircle(orbs[i].position.x, orbs[i].position.y, 5, orbs[i].color);
-            DrawRing((Vector2){ orbs[i].position.x, orbs[i].position.y }, orbs[i].radius-2, orbs[i].radius, 0, 360, 32, VerdeOscuro);
+            if(debug) DrawRing((Vector2){ orbs[i].position.x, orbs[i].position.y }, (orbs[i].radius*radiusMultiplier)-2, (orbs[i].radius*radiusMultiplier), 0, 360, 32, VerdeOscuro);
         }
     }
 }
 void DrawEnemies(Enemy *enemies, int amount) {
     for (int i = 0; i < amount; i++) {
         if(enemies[i].enabled){
-            DrawRectangleRounded((Rectangle){ enemies[i].position.x-10.0f, enemies[i].position.y-12.5f, 20, 35 }, 1.0f, 10, RojoOscuro);
-            DrawRing((Vector2){ enemies[i].position.x, enemies[i].position.y }, enemies[i].radius-2, enemies[i].radius, 0, 360, 32, VerdeOscuro);
-            DrawRectangle(enemies[i].position.x - 10.0f, enemies[i].position.y - 20.0f, (enemies[i].health/enemies[i].maxHealth) * 20, 5, RojoOscuro);
+            startAnimation(demAnim, enemies[i].position, WHITE, demAnimCount, 2.5f);
+            demAnimCount++;
+            if(debug) DrawRing((Vector2){ enemies[i].position.x, enemies[i].position.y }, enemies[i].radius-2, enemies[i].radius, 0, 360, 32, VerdeOscuro);
+            if(debug) DrawRectangle(enemies[i].position.x - 10.0f, enemies[i].position.y - 20.0f, (enemies[i].health/enemies[i].maxHealth) * 20, 5, RojoOscuro);
         }
     }
 }
@@ -560,13 +749,14 @@ void DrawProjectiles(Projectile *projectiles, int amount) {
         if(projectiles[i].enabled){
             DrawTexture(bullet, projectiles[i].position.x - bullet.width/2, projectiles[i].position.y - bullet.height/2, Amarillo);
             }
+            if(debug) DrawRing((Vector2){ projectiles[i].position.x, projectiles[i].position.y }, (projectiles[i].radius*corazonFracturadoMultiplier)-2, projectiles[i].radius*corazonFracturadoMultiplier, 0, 360, 32, VerdeOscuro);
     }
 }
 
 void OrbCollision(Orb *orbs) {
     for (int i = 0; i < MAX_ORBS; i++) {
         if(orbs[i].enabled){
-            if(CheckCollisionCircles(player.position, player.radius, orbs[i].position, orbs[i].radius)){
+            if(CheckCollisionCircles(player.position, player.radius, orbs[i].position, orbs[i].radius*radiusMultiplier)){
 
                 Vector2 direction = Vector2Subtract(player.position, orbs[i].position);
                 float distance = Vector2Length(direction);
@@ -597,13 +787,12 @@ void EnemyCollision(Enemy *enemies) {
                 enemies[i].position = Vector2Add(enemies[i].position, direction);
             }
             if(CheckCollisionCircles(player.position, player.radius, enemies[i].position, enemies[i].radius)){
-
                 // Enemigo esta cerca del jugador
                 if (distance <= enemies[i].radius + player.radius) {
                     enemies[i].position = (Vector2){ -100000, -100000 };
                     enemies[i].speed = 0.0f;
                     enemies[i].enabled = false;
-                    PlayerTakeDamage(1);
+                    PlayerTakeDamage(1, enemies);
                 }
             }
         }
@@ -613,30 +802,25 @@ void EnemyCollision(Enemy *enemies) {
 void ProjectileCollision(Projectile *projectiles, Enemy *enemies) {
     for (int i = 0; i < MAX_PROJECTILES; i++) {
         if(projectiles[i].enabled){
-            // Colision con enemigos
-            for (int j = 0; j < MAX_ENEMIES; j++) {
-                if(enemies[j].enabled){
-                    if(CheckCollisionCircles(projectiles[i].position, projectiles[i].radius, enemies[j].position, enemies[j].radius)){
-                        enemies[j].health -= projectiles[i].damage;
+        // Colision con enemigos
+        for (int j = 0; j < MAX_ENEMIES; j++) {
+            if(enemies[j].enabled){
+                if(CheckCollisionCircles(projectiles[i].position, projectiles[i].radius, enemies[j].position, enemies[j].radius)){
+                        // Corazon fracturado
+                        if(hasCorazonFracturado && player.health <= 1) {
+                            startAnimation(explotionAnim, projectiles[i].position, BLUE, explotionAnimCount, 2.0f);
+                            explotionAnimCount++;
+                            for (int k = 0; k < MAX_ENEMIES; k++) {
+                                if(enemies[k].enabled){
+                                    if(CheckCollisionCircles(projectiles[i].position, projectiles[i].radius*corazonFracturadoMultiplier, enemies[k].position, enemies[k].radius)){
+                                        EnemyTakeDamage(&enemies[k], projectiles[i].damage);
+                                    }
+                                }
+                            }
+                        }
                         projectiles[i].enabled = false;
                         projectiles[i].position = (Vector2){ -100000, -100000 };
-                        if (enemies[j].health <= 0) {
-                            enemies[j].enabled = false;
-                            enemiesKilled++;
-                            GenOrbs(enemies[j].position, 1);
-                            orbsCount += 1;
-                            orbsCollected++;
-                            startEnemyAnimation(enemies[j].position, Amarillo);
-                            if(hasDesdeLaTumba) {
-                                GenProjectiles(enemies[j].position, Vector2Add(enemies[j].position, (Vector2){ cosf(30 * DEG2RAD), sinf(30 * DEG2RAD) }), 1);
-                                projectilesCount++;
-                                GenProjectiles(enemies[j].position, Vector2Add(enemies[j].position, (Vector2){ cosf(150 * DEG2RAD), sinf(150 * DEG2RAD) }), 1);
-                                projectilesCount++;
-                                GenProjectiles(enemies[j].position, Vector2Add(enemies[j].position, (Vector2){ cosf(270 * DEG2RAD), sinf(270 * DEG2RAD) }), 1);
-                                projectilesCount++;
-                            }
-                            enemies[j].position = (Vector2){ -100000, -100000 };
-                        }
+                        EnemyTakeDamage(&enemies[j], projectiles[i].damage);
                     }
                 }
             }
@@ -644,19 +828,43 @@ void ProjectileCollision(Projectile *projectiles, Enemy *enemies) {
     }
 }
 
-void PlayerTakeDamage(int damage) {
+void EnemyTakeDamage(Enemy *enemy, int damage){
+    enemy->health -= damage;
+    if (enemy->health <= 0) {
+        enemy->enabled = false;
+        enemiesKilled++;
+        GenOrbs(enemy->position, 1);
+        orbsCount += 1;
+        orbsCollected++;
+        startEnemyAnimation(enemy->position, Amarillo);
+        enemyAnimationsCount++;
+        if(hasAlmasErrantes) {
+            GenProjectiles(enemy->position, Vector2Add(enemy->position, (Vector2){ cosf(30 * DEG2RAD), sinf(30 * DEG2RAD) }), 1);
+            projectilesCount++;
+            GenProjectiles(enemy->position, Vector2Add(enemy->position, (Vector2){ cosf(150 * DEG2RAD), sinf(150 * DEG2RAD) }), 1);
+            projectilesCount++;
+            GenProjectiles(enemy->position, Vector2Add(enemy->position, (Vector2){ cosf(270 * DEG2RAD), sinf(270 * DEG2RAD) }), 1);
+            projectilesCount++;
+        }
+        enemy->position = (Vector2){ -100000, -100000 };
+    }
+}
+
+void PlayerTakeDamage(int damage, Enemy *enemies) {
     PushEnemiesAway(enemies);
     player.health -= damage;
+    for(int i=0; i<=MAX_ENEMIES; i++){
+        if(enemies[i].enabled && hasExplosion && CheckCollisionCircles(player.position, player.radius*explotionRadius, enemies[i].position, enemies[i].radius)){
+            startAnimation(explotionAnim, player.position, BLUE, explotionAnimCount, 2.5f);
+            EnemyTakeDamage(&enemies[i], explotionDamage);
+        }
+    }
     if (player.health <= 0) {
         player.health = 0;
+        // Resucitar al jugador
         if(hasResurrect && !resurrected) {
-            // Resucitar al jugador
-            player.position = (Vector2){ 0, 0 };
-            player.health = 5;
-            player.maxHealth = 5;
-            player.level = 1;
-            player.experience = 0;
-            hasResurrect = false;
+            player.health++;
+            singleAnimation(&lotusAnimation, lotus, player.position, GREEN, 1, 1.6f);
             resurrected = true;
             for(int i=0; i < MAX_ENEMIES; i++) {
                 enemies[i].enabled = false;
@@ -666,14 +874,10 @@ void PlayerTakeDamage(int damage) {
                 projectiles[i].enabled = false;
                 projectiles[i].position = (Vector2){ -100000, -100000 };
             }
-            for(int i=0; i < MAX_ORBS; i++) {
-                orbs[i].enabled = false;
-                orbs[i].position = (Vector2){ -100000, -100000 };
-            }
             enemiesCount = 0;
             projectilesCount = 0;
-            orbsCount = 0;
             upgradeMenu = false;
+            menuActive = false;
         }
     }
 }
@@ -730,23 +934,7 @@ void enemyTrigger(Enemy *enemies, Vector2 position) {
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if(enemies[i].enabled){
             if(CheckCollisionCircles(position, 10.0f, enemies[i].position, enemies[i].radius)){
-                enemies[i].health -= abilityDamage*abilityMultiplier;
-                if (enemies[i].health <= 0) {
-                    enemies[i].enabled = false;
-                    enemiesKilled++;
-                    GenOrbs(enemies[i].position, 1);
-                    orbsCount += 1;
-                    orbsCollected++;
-                    if(hasDesdeLaTumba) {
-                        GenProjectiles(enemies[i].position, Vector2Add(enemies[i].position, (Vector2){ cosf(30 * DEG2RAD), sinf(30 * DEG2RAD) }), 1);
-                        projectilesCount++;
-                        GenProjectiles(enemies[i].position, Vector2Add(enemies[i].position, (Vector2){ cosf(150 * DEG2RAD), sinf(150 * DEG2RAD) }), 1);
-                        projectilesCount++;
-                        GenProjectiles(enemies[i].position, Vector2Add(enemies[i].position, (Vector2){ cosf(270 * DEG2RAD), sinf(270 * DEG2RAD) }), 1);
-                        projectilesCount++;
-                    }
-                    enemies[i].position = (Vector2){ -100000, -100000 };
-                }
+                EnemyTakeDamage(&enemies[i], abilityDamage*abilityMultiplier);
             }
         }
     }
@@ -776,8 +964,148 @@ void ally(Enemy *enemies) {
     }
 }
 
-// Menu de mejoras 
+void setAbilityStatus(int abilityIndex, bool status) {
+    switch (abilityIndex) {
+        case 0: hasResurrect = status; break;
+        case 1: hasDisparoMejorado = status; break;
+        case 2: hasMovimientoAgil = status; break;
+        case 3: hasRegeneracion = status; break;
+        case 4: hasBifurcacion = status; break;
+        case 5: hasAliado = status; break;
+        case 6: hasTormentaDeBalas = status; break;
+        case 7: hasFuria = status; break;
+        case 8: hasExplosion = status; break;
+        case 9: hasImanDeOrbes = status; break;
+        case 10: hasDisparoRapido = status; break;
+        case 11: hasAlmasErrantes = status; break;
+        case 12: hasSierraGiratoria = status; break;
+        case 13: hasCorazonFracturado = status; break;
+        default: break;  
+    }
+}
 
+bool getAbilityStatus(int abilityIndex) {
+    switch (abilityIndex) {
+        case 0: return hasResurrect;
+        case 1: return hasDisparoMejorado;
+        case 2: return hasMovimientoAgil;
+        case 3: return hasRegeneracion;
+        case 4: return hasBifurcacion;
+        case 5: return hasAliado;
+        case 6: return hasTormentaDeBalas;
+        case 7: return hasFuria;
+        case 8: return hasExplosion;
+        case 9: return hasImanDeOrbes;
+        case 10: return hasDisparoRapido;
+        case 11: return hasAlmasErrantes;
+        case 12: return hasSierraGiratoria;
+        case 13: return hasCorazonFracturado;
+        default: return false;  
+    }
+}
+
+void disableUpgradeMenu() {
+    upgradeMenu = false;
+    menuActive = false;
+}
+
+void UpdateDrawAnimations(Animation *animations, int amount, Texture2D textures[]) {
+    for (int i = 0; i < amount; i++) {
+        if (animations[i].active) {
+            animations[i].elapsedTime += GetFrameTime();
+            
+            if (animations[i].elapsedTime >= 0.03f) {
+                animations[i].currentFrame++;
+                animations[i].elapsedTime = 0.0f;
+                
+                if (animations[i].currentFrame >= animations[i].frames) {
+                    animations[i].active = false;
+                    animations[i].currentFrame = 0;
+                }
+            }
+            
+            if (animations[i].active) {
+                DrawTextureEx(textures[animations[i].currentFrame],
+                    (Vector2){animations[i].position.x - (textures[animations[i].currentFrame].width*animations[i].size) / 2, 
+                    animations[i].position.y - (textures[animations[i].currentFrame].height*animations[i].size) / 2}, 
+                    0.0f,
+                    animations[i].size,
+                    animations[i].tint);
+            }
+        }
+    }
+}
+
+void startEnemyAnimation(Vector2 position, Color tint) {
+    if(enemyAnimationsCount >= MAX_ANIMATIONS) {
+        enemyAnimationsCount = 0;
+    }
+    for (int i = 0; i < MAX_ANIMATIONS; i++) {
+        if (!enemyAnimations[i].active) {
+            enemyAnimations[i].position = position;
+            enemyAnimations[i].currentFrame = 0;
+            enemyAnimations[i].elapsedTime = 0.0f;
+            enemyAnimations[i].active = true;
+            enemyAnimations[i].tint = tint;
+            enemyAnimations[i].size = 1.0f;
+        }
+    }
+}
+
+void startAnimation(Animation *animations, Vector2 position, Color tint, int count, float size) {
+    if(count >= MAX_ANIMATIONS) {
+        count = 0;
+    }
+    for (int i = 0; i < MAX_ANIMATIONS; i++) {
+        if (!animations[i].active) {
+            animations[i].position = position;
+            animations[i].currentFrame = 0;
+            animations[i].elapsedTime = 0.0f;
+            animations[i].active = true;
+            animations[i].tint = tint;
+            animations[i].size = size;
+        }
+    }
+}
+
+void UpdateAnimation(Animation *animation){
+    if (animation->active) {
+        animation->elapsedTime += GetFrameTime();
+        
+        if (animation->elapsedTime >= 0.03f) {
+            animation->currentFrame++;
+            animation->elapsedTime = 0.0f;
+            
+            if (animation->currentFrame >= animation->frames) {
+                animation->active = false;
+                animation->currentFrame = 0;
+            }
+        }
+
+        DrawTextureEx(animation->textures[animation->currentFrame],
+            (Vector2){animation->position.x - (animation->textures[animation->currentFrame].width*animation->size) / 2, 
+            animation->position.y - (animation->textures[animation->currentFrame].height*animation->size) / 2}, 
+            0.0f,
+            animation->size,
+            animation->tint);
+    }
+}
+
+void singleAnimation(Animation *animation, Texture2D textures[], Vector2 position, Color tint, int count, float size) {
+    if(!animation->active){
+        for(int i=0; i<32; i++){
+            animation->textures[i] = textures[i];
+        }
+        animation->position = position;
+        animation->currentFrame = 0;
+        animation->elapsedTime = 0.0f;
+        animation->active = true;
+        animation->tint = tint;
+        animation->size = size;
+    }
+}
+
+// Menu de mejoras 
 void enableUpgradeMenu() {
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(WHITE, 0.5f));
     DrawRectangleRounded((Rectangle){ GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 250, 400, 500 }, 0.02f, 10, Amarillo);
@@ -801,32 +1129,43 @@ void enableUpgradeMenu() {
         270.0f, 
         Amarillo);
     DrawText("UPGRADE MENU", GetScreenWidth()/2 - MeasureText("UPGRADE MENU", 20)/2, GetScreenHeight()/2 - 200 + 20, 20, AzulOscuro);
-    // Define los rextangulos
+
     Rectangle ability1 = { GetScreenWidth()/2 - 180, GetScreenHeight()/2 - 150, 360, 80 };
     Rectangle ability2 = { GetScreenWidth()/2 - 180, GetScreenHeight()/2 - 50, 360, 80 };
     Rectangle ability3 = { GetScreenWidth()/2 - 180, GetScreenHeight()/2 + 50, 360, 80 };
 
-    // Define los botones
     Rectangle cancelButton = { GetScreenWidth()/2 - 180, GetScreenHeight()/2 + 160, 160, 40 };
     Rectangle acceptButton = { GetScreenWidth()/2 + 20, GetScreenHeight()/2 + 160, 160, 40 };
 
-    // Elegir Habilidades
     if(!selectedIndex){
-    do {
-        index[0] = GetRandomValue(0, 17);
-        index[1] = GetRandomValue(0, 17);
-        index[2] = GetRandomValue(0, 17);
-    }while(index[0] == index[1] || index[0] == index[2] || index[1] == index[2]);
-    selectedIndex = true;
+        int availableAbilities[18];
+        int availableCount = 0;
+
+        for (int i = 0; i < 18; i++) {
+            if (!getAbilityStatus(i)) {
+                availableAbilities[availableCount++] = i;
+            }
+        }
+
+        if (availableCount < 3) {
+            selectedIndex = false; 
+            return;
+        }
+
+        do {
+            index[0] = availableAbilities[GetRandomValue(0, availableCount - 1)];
+            index[1] = availableAbilities[GetRandomValue(0, availableCount - 1)];
+            index[2] = availableAbilities[GetRandomValue(0, availableCount - 1)];
+        } while (index[0] == index[1] || index[0] == index[2] || index[1] == index[2]);
+
+        selectedIndex = true;
     }
 
-    // Draw
     DrawRectangleRounded(ability1, 0.1f, 10, WHITE);
     DrawRectangleRounded(ability2, 0.1f, 10, WHITE);
     DrawRectangleRounded(ability3, 0.1f, 10, WHITE);
 
-    switch (selectedAbility)
-    {
+    switch (selectedAbility) {
     case 0:
         DrawRectangleLines(ability1.x, ability1.y, ability1.width, ability1.height, AzulOscuro);
         break;
@@ -842,7 +1181,6 @@ void enableUpgradeMenu() {
     DrawRectangle(ability2.x + 10, ability2.y + 10, 60, 60, VerdeOscuro);
     DrawRectangle(ability3.x + 10, ability3.y + 10, 60, 60, AzulOscuro);
 
-    // Draw titles, subtitles
     DrawText(TextFormat("%s", abilities[index[0]].name), ability1.x + 80, ability1.y + 10, 20, AzulOscuro);
     DrawText(TextFormat("%s", abilities[index[0]].description), ability1.x + 80, ability1.y + 40, 16, AzulOscuro);
 
@@ -852,14 +1190,12 @@ void enableUpgradeMenu() {
     DrawText(TextFormat("%s", abilities[index[2]].name), ability3.x + 80, ability3.y + 10, 20, AzulOscuro);
     DrawText(TextFormat("%s", abilities[index[2]].description), ability3.x + 80, ability3.y + 40, 16, AzulOscuro);
 
-    // Draw buttons
     DrawRectangleRounded(cancelButton, 0.1f, 10, Naranja);
     DrawRectangleRounded(acceptButton, 0.1f, 10, VerdeOscuro);
 
     DrawText("Cancelar", cancelButton.x + 20, cancelButton.y + 10, 20, WHITE);
     DrawText("Aceptar", acceptButton.x + 20, acceptButton.y + 10, 20, WHITE);
 
-    // Handle input
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
         Vector2 mouse = GetMousePosition();
         if (CheckCollisionPointRec(mouse, ability1)) {
@@ -869,61 +1205,42 @@ void enableUpgradeMenu() {
         } else if (CheckCollisionPointRec(mouse, ability3)) {
             selectedAbility = 2;
         } else if (CheckCollisionPointRec(mouse, cancelButton)) {
-            upgradeMenu = false; // Cancel
+            upgradeMenu = false; // Cancelar
+            menuActive = true;
             selectedIndex = false;
             selectedAbility = 0;
         } else if (CheckCollisionPointRec(mouse, acceptButton)) {
-            // Accept selected ability
             upgradeMenu = false;
+            menuActive = true;
+            acquiredAbilities[selectedAbility] = abilities[index[selectedAbility]];
+            setAbilityStatus(index[selectedAbility], true); 
             selectedIndex = false;
             selectedAbility = 0;
-            acquiredAbilities[0] = abilities[selectedAbility];
         }
     }
+
     if (IsKeyPressed(KEY_ESCAPE)) {
         upgradeMenu = false;
-    }
-}
-void disableUpgradeMenu() {
-    upgradeMenu = false;
-}
-
-void UpdateDrawAnimations(Animation *animations, int amount, Texture2D textures[]) {
-    for (int i = 0; i < amount; i++) {
-        if (animations[i].active) {
-            animations[i].elapsedTime += GetFrameTime();
-            
-            if (animations[i].elapsedTime >= 0.03f) {
-                animations[i].currentFrame++;
-                animations[i].elapsedTime = 0.0f;
-                
-                if (animations[i].currentFrame >= animations[i].frames) {
-                    animations[i].active = false;
-                    animations[i].currentFrame = 0;
-                }
-            }
-            
-            if (animations[i].active) {
-                DrawTexture(textures[animations[i].currentFrame], 
-                           animations[i].position.x - textures[animations[i].currentFrame].width / 2, 
-                           animations[i].position.y - textures[animations[i].currentFrame].height / 2, 
-                           animations[i].tint);
-            }
-        }
+        menuActive = false;
     }
 }
 
-void startEnemyAnimation(Vector2 position, Color tint) {
-    if(enemyAnimationsCount >= MAX_EN_ANI) {
-        enemyAnimationsCount = 0;
-    }
-    for (int i = 0; i < MAX_EN_ANI; i++) {
-        if (!enemyAnimations[i].active) {
-            enemyAnimations[i].position = position;
-            enemyAnimations[i].currentFrame = 0;
-            enemyAnimations[i].elapsedTime = 0.0f;
-            enemyAnimations[i].active = true;
-            enemyAnimations[i].tint = tint;
-        }
+void DrawDebugInfo(){
+    DrawFPS(10, 10);
+    DrawText(TextFormat("Exp:%d ", player.experience), 10, 30, 20, Amarillo);
+    DrawText(TextFormat("Level:%d ", player.level), 10, 60, 20, Amarillo);
+    DrawText(TextFormat("Health:%d ", player.health), 10, 90, 20, Amarillo);
+    DrawText(TextFormat("x:%.0f, y:%.0f ", player.position.x, player.position.y), 10, 120, 20, Amarillo);
+    DrawText(TextFormat("Projectiles:%d ", projectilesCount), 10, 150, 20, Amarillo);
+    DrawText(TextFormat("Enemies:%d ", enemiesCount), 10, 180, 20, Amarillo);
+    DrawText(TextFormat("Orbs:%d ", orbsCount), 10, 210, 20, Amarillo);
+    DrawText(TextFormat("%2.0f", totalGameTime), 10, 240, 20, Amarillo);
+    int yOffset = 280;
+    DrawText("HABILIDADES:", 10, yOffset, 20, Amarillo);
+    yOffset += 30;
+    for (int i = 0; i < 14; i++) {
+        Color abilityColor = getAbilityStatus(i) ? VerdeOscuro : RojoOscuro;
+        DrawRectangle(10, yOffset + i * 28, 18, 18, abilityColor);
+        DrawText(abilities[i].name, 35, yOffset + i * 28, 18, abilityColor);
     }
 }
