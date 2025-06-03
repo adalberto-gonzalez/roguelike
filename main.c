@@ -1,5 +1,6 @@
 #include "raylib.h"
 #include "raymath.h"
+#include "ensamblador.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -256,11 +257,6 @@ void ResetGameState();
 void ResetGameStateFull();
 
 //----------------------------------------------------------------------------------
-// Ensamblador
-//----------------------------------------------------------------------------------
-extern void MiFuncionASM(void);
-
-//----------------------------------------------------------------------------------
 // Main
 //----------------------------------------------------------------------------------
 int main()
@@ -494,9 +490,7 @@ UnloadPlayerAnimation(&player.walkRight);
     UnloadTexture(uiCorner);
     UnloadTexture(healthBar);
     UnloadTexture(saw);
-
     MiFuncionASM();
-
     return 0;
 }
 void LoadPlayerAnimation(PlayerAnimation *anim, const char *pathFormat, int frameCount) {
@@ -520,7 +514,6 @@ if (tex.id == 0) {
 }
 }
 }
-
 
 void UnloadPlayerAnimation(PlayerAnimation *anim) {
     for (int i = 0; i < anim->frameCount; i++) {
