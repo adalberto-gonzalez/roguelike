@@ -1,29 +1,44 @@
-/*******************************************************************************************
-*
-*   Roguelike (Vampire survivors)
-*
-********************************************************************************************/
-
 #include "raylib.h"
 #include "raymath.h"
 #include <stdio.h>
+#include <string.h>
+
 
 #define MAX_ORBS 256
 #define ORB_RADIUS 70.0f
-#define MAX_ENEMIES 256
+#define MAX_ENEMIES 512
 #define ENEMY_RADIUS 15.0f
 #define MAX_PROJECTILES 32
 #define PROJECTILE_RADIUS 5.0f
 #define PROJECTILE_SPEED 4.0f
 #define MAX_ANIMATIONS 32
+#define IMAN_DE_ORBES 5
 
-const Color Naranja = (Color){ 255, 111, 0, 255 }; // Ensure this color is correctly initialized
+#define MAX_BG_FRAMES 8
+#define MAX_ANIM_FRAMES 16
+#define MAX_SCORES 10
+#define MAX_NAME_LENGTH 32
+
+Texture2D bgFrames[MAX_BG_FRAMES];
+int currentBgFrame = 0;
+float bgElapsedTime = 0.0f;
+
+
+const Color Naranja = (Color){ 255, 111, 0, 255 };
 const Color RojoOscuro = (Color) { 198, 18, 0, 255 };
 const Color VerdeOscuro = (Color) { 44, 66, 55, 255 };
 const Color AzulOscuro = (Color) { 20, 30, 45, 255 };
 const Color Amarillo = (Color) { 255, 204, 0, 255 };
+const Color Bullet = (Color) { 255, 240, 0, 255 };
 const Color Crema = (Color) { 255, 240, 220, 255 };
 
+typedef struct PlayerAnimation {
+    Texture2D frames[MAX_ANIM_FRAMES];  
+    int frameCount;
+    int currentFrame;
+    float elapsedTime;
+    bool active;
+} PlayerAnimation;
 
 typedef struct Player {
     Vector2 position;
@@ -35,6 +50,11 @@ typedef struct Player {
     int level;
     int experience;
     int maxHealth;
+    PlayerAnimation idle;
+    PlayerAnimation walkUp;
+    PlayerAnimation walkDown;
+    PlayerAnimation walkLeft;
+    PlayerAnimation walkRight;
 } Player;
 
 typedef struct Orb{
@@ -62,11 +82,11 @@ typedef struct Projectile{
     Vector2 direction;
 } Projectile;
 
-typedef struct Ability {
+typedef struct skill {
     Texture2D icon;
     const char *name;
     const char *description;
-} Ability;
+} skill;
 
 typedef struct Animation {
     Texture2D textures[32];
@@ -78,6 +98,15 @@ typedef struct Animation {
     Color tint;
     float size;
 } Animation;
+
+typedef struct {
+    char name[MAX_NAME_LENGTH];
+    int kills;
+} ScoreEntry;
+
+
+ScoreEntry leaderboard[MAX_SCORES];
+int leaderboardCount = 0;
 
 //----------------------------------------------------------------------------------
 // Variables
@@ -100,6 +129,8 @@ float furiaTimer = 0.0f;
 float regenTimer = 0.0f;
 float stormTimer = 0.0f;
 bool debug = false;
+PlayerAnimation *currentAnim = NULL;
+
 
 // Animaciones
 Animation enemyAnimations[MAX_ANIMATIONS] = { 0 };
@@ -118,8 +149,9 @@ int projectilesHit = 0;
 
 // Habilidades
 bool selectedIndex = false;
-int abilityDamage = 20;
-float abilityMultiplier = 1.0f;
+
+int skillDamage = 20;
+float skillMultiplier = 1.0f;
 float radiusMultiplier = 1.0f;
 float currentSpeed = 1.0f;
 int currentDamage = 10;
@@ -127,8 +159,8 @@ bool furiaActive = false;
 int explotionDamage = 30;
 float explotionRadius = 12.0f; //Multiplicado por player.radius
 float corazonFracturadoMultiplier = 20.0f;
-Ability abilities[18] = { 0 };
-Ability acquiredAbilities[18] = { 0 };
+skill skills[18] = { 0 };
+skill acquiredskills[18] = { 0 };
 bool resurrected = false;
 float shootVelocity = 1.0f;
 bool hasResurrect = false; // ✔️
@@ -145,12 +177,24 @@ bool hasDisparoRapido = false; // ✔️
 bool hasAlmasErrantes = false; // ✔️
 bool hasSierraGiratoria = false; // ✔️
 bool hasCorazonFracturado = false; // ✔️
+int imanDeOrbesCount = 0;  
+bool disparoRapidoAplicado = false;
+bool disparoMejoradoAplicado = false;
+bool movimientoAgilAplicado = false;
+
+
+bool victoryScreen = false;
+char playerName[MAX_NAME_LENGTH] = "";
+bool nameEntered = false;
+bool scoreGuardado = false; 
+
+
 
 //UI
 bool upgradeMenu = false;
 bool deathScreen = false;
 bool menuActive = false;
-int selectedAbility = 0;
+int selectedskill = 0;
 int index[3] = { 0 };
 
 // Textures
@@ -174,7 +218,7 @@ Sound shoot = { 0 };
 //----------------------------------------------------------------------------------
 // Funciones
 //----------------------------------------------------------------------------------
-static void UpdateDrawFrame(void);          // Update and draw one frame
+static void UpdateDrawFrame(void); // Update and draw one frame
 void GenOrbs(Vector2 position, int amount);
 void GenEnemies(Vector2 position, int amount);
 void GenProjectiles(Vector2 position, Vector2 direction, int amount);
@@ -194,24 +238,39 @@ void ally(Enemy *enemies);
 void enableUpgradeMenu();
 void disableUpgradeMenu();
 void UpdateDrawAnimations(Animation *animations, int amount, Texture2D textures[]);
-void startEnemyAnimation(Vector2 position, Color tint);
+void startAnimationWithTextures(Animation *animations, Vector2 position, Color tint, Texture2D textures[], int frameCount, float size);
+void startEnemyAnimation(Vector2 position, Color tint, int frameCount);
 void startAnimation(Animation *animations, Vector2 position, Color tint, int count, float size);
 void UpdateAnimation(Animation *animation);
 void singleAnimation(Animation *animation, Texture2D textures[], Vector2 position, Color tint, int count, float size);
-void setAbilityStatus(int abilityIndex, bool status);
-bool getAbilityStatus(int abilityIndex);
+void setskillStatus(int skillIndex, bool status);
+bool getskillStatus(int skillIndex);
 void DrawDebugInfo();
+void LoadPlayerAnimation(PlayerAnimation *anim, const char *pathFormat, int frameCount);
+void UnloadPlayerAnimation(PlayerAnimation *anim);
+void UpdatePlayerAnimation(PlayerAnimation *anim, float frameDelay);
+void GetPlayerNameInput();
+void SaveScore(const char *name, int kills);
+void LoadScores();
+void DrawLeaderboard();
+void ResetGameState();
+
+void ResetGameStateFull();
+
 
 //----------------------------------------------------------------------------------
 // Main
 //----------------------------------------------------------------------------------
 int main()
 {
+
     // Initialization
     //--------------------------------------------------------------------------------------
     int screenWidth = 1280;
     int screenHeight = 720;
-    
+
+        SetTraceLogLevel(LOG_ALL);
+
     if(GetMonitorHeight(0) > 1280 || GetMonitorWidth(0) > 720) {
         screenWidth = GetMonitorWidth(0); 
         screenHeight = GetMonitorHeight(0);
@@ -229,68 +288,81 @@ int main()
     player.maxHealth = 5;
     currentSpeed = player.speed;
     currentDamage = player.damage;
+    
+
 
     // Habilidades
-    abilities[0].icon = LoadTexture("textures/ability1.png");
-    abilities[0].name = "Eco de la Muerte";
-    abilities[0].description = "Resucita al morir";
+    skills[0].icon = LoadTexture("textures/skill1.png");
+    skills[0].name = "Eco de la Muerte";
+    skills[0].description = "Resucita al morir";
 
-    abilities[1].icon = LoadTexture("textures/ability2.png");
-    abilities[1].name = "Disparo Mejorado";
-    abilities[1].description = "Incrementa el daño un 20%%";
+    skills[1].icon = LoadTexture("textures/skill2.png");
+    skills[1].name = "Disparo Mejorado";
+skills[1].description = "Incrementa el daño\nun 20%";
 
-    abilities[2].icon = LoadTexture("textures/ability3.png");
-    abilities[2].name = "Movimiento Agil";
-    abilities[2].description = "Incrementa la velocidad un 20%%";
+    skills[2].icon = LoadTexture("textures/skill3.png");
+    skills[2].name = "Movimiento Agil";
+skills[2].description = "Incrementa la velocidad\nun 20%";
     
-    abilities[3].icon = LoadTexture("textures/ability4.png");
-    abilities[3].name = "Regeneración";
-    abilities[3].description = "Cada 60s emites un latido restaurador que cura 1 de vida.";
+    skills[3].icon = LoadTexture("textures/skill4.png");
+    skills[3].name = "Regeneración";
+skills[3].description = "Cada 60s emites un latido\nrestaurador que cura 1 de vida.";
 
-    abilities[4].icon = LoadTexture("textures/ability5.png");
-    abilities[4].name = "Bifurcación Arcana";
-    abilities[4].description = "Despliegas un disparo espejo.";
+    skills[4].icon = LoadTexture("textures/skill5.png");
+    skills[4].name = "Bifurcación Arcana";
+skills[4].description = "Despliegas un disparo espejo.";
 
-    abilities[5].icon = LoadTexture("textures/ability6.png");
-    abilities[5].name = "Heraldos de Acero";
-    abilities[5].description = "Convocas un aliado mecánico que abre fuego cada 0.5 s.";
+    skills[5].icon = LoadTexture("textures/skill6.png");
+    skills[5].name = "Heraldos de Acero";
+skills[5].description = "Convocas un aliado mecánico\nque abre fuego cada 0.5 s.";
 
-    abilities[6].icon = LoadTexture("textures/ability7.png");
-    abilities[6].name = "Tormenta de Balas";
-    abilities[6].description = "Cada 3s desatas una ráfaga en seis direcciones.";
+    skills[6].icon = LoadTexture("textures/skill7.png");
+    skills[6].name = "Tormenta de Balas";
+skills[6].description = "Cada 3s desatas una ráfaga\nen seis direcciones.";
 
-    abilities[7].icon = LoadTexture("textures/ability8.png");
-    abilities[7].name = "Furia Incontenible";
-    abilities[7].description = "Al recibir daño, te transformas: +50% daño y +25% velocidad por 15s.";
+    skills[7].icon = LoadTexture("textures/skill8.png");
+    skills[7].name = "Furia Incontenible";
+skills[7].description = "Al recibir daño, te transformas:\n+50% daño y +25% velocidad por 15s.";
 
-    abilities[8].icon = LoadTexture("textures/ability9.png");
-    abilities[8].name = "Venganza Explosiva";
-    abilities[8].description = "Cuando te hieren, desatas una explosión que inflige 30 de daño a los cercanos.";
+    skills[8].icon = LoadTexture("textures/skill9.png");
+    skills[8].name = "Venganza Explosiva";
+skills[8].description = "Cuando te hieren, desatas una\nexplosión.";
 
-    abilities[9].icon = LoadTexture("textures/ability10.png");
-    abilities[9].name = "Iman de Orbes";
-    abilities[9].description = "Tu campo de recolección de orbes se expande un 25%%";
+    skills[9].icon = LoadTexture("textures/skill10.png");
+    skills[9].name = "Iman de Orbes";
+skills[9].description = "Tu campo de recolección de orbes\nse expande un 25%";
 
-    abilities[10].icon = LoadTexture("textures/ability11.png");
-    abilities[10].name = "Disparo Rápido";
-    abilities[10].description = "Incrementa la velocidad de disparo un 25%%";
+    skills[10].icon = LoadTexture("textures/skill11.png");
+    skills[10].name = "Disparo Rápido";
+skills[10].description = "Incrementa la velocidad\nde disparo un 25%";
 
-    abilities[11].icon = LoadTexture("textures/ability12.png");
-    abilities[11].name = "Almas Errantes";
-    abilities[11].description = "Los enemigos muertos disparan 3 \nproyectiles al morir";
+    skills[11].icon = LoadTexture("textures/skill12.png");
+    skills[11].name = "Almas Errantes";
+skills[11].description = "Los enemigos muertos\ndisparan 3 proyectiles al morir";
     
-    abilities[12].icon = LoadTexture("textures/ability13.png");
-    abilities[12].name = "Molinete de Hierro";
-    abilities[12].description = "Una sierra giratoria rodea tu figura, destrozando a los enemigos cercanos.";
+    skills[12].icon = LoadTexture("textures/skill13.png");
+    skills[12].name = "Molinete de Hierro";
+skills[12].description = "Una sierra giratoria te rodea \ndañando a los enemigos cercanos.";
 
-    abilities[13].icon = LoadTexture("textures/ability14.png");
-    abilities[13].name = "Corazón Fracturado";
-    abilities[13].description = "Cuando tu salud es baja, tus disparos explotan al impacto dañando todo a tu alrededor.";
+    skills[13].icon = LoadTexture("textures/skill14.png");
+    skills[13].name = "Corazón Fracturado";
+skills[13].description = "Al tener poca salud,tus disparos al\ntacto explotan con daño colateral.";
 
 
     InitWindow(screenWidth, screenHeight, "Roguelike");
     //ToggleFullscreen();
     InitAudioDevice();
+    if (!FileExists("textures/quieto/1.png")) {
+    TraceLog(LOG_ERROR, "No se encuentra textures/quieto/1.png");
+}
+
+LoadPlayerAnimation(&player.idle, "textures/quieto/%d.png", 3);
+LoadPlayerAnimation(&player.walkRight, "textures/derecha/%d.png", 4);
+LoadPlayerAnimation(&player.walkDown, "textures/abajo/%d.png", 4);
+LoadPlayerAnimation(&player.walkUp, "textures/arriba/%d.png", 2);
+
+
+currentAnim = &player.idle;
 
     // Carga de texturas
     noiseTexture = LoadTexture("textures/noise_overlay.png");
@@ -312,6 +384,16 @@ int main()
     for (int i=0; i <= 8; i++){
         dem[i] = LoadTexture(TextFormat("textures/dem/%d.png", i+1));
     }
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+    for (int j = 0; j < 8; j++) {
+        demAnim[i].textures[j] = dem[j];
+    }
+    demAnim[i].frames = 8;
+}
+    for (int i = 0; i < MAX_BG_FRAMES; i++) {
+    bgFrames[i] = LoadTexture(TextFormat("textures/background/1 (%d).png", i + 1));
+    }
+
 
     // Carga de sonidos
     music = LoadMusicStream("sound/ganymede.ogg");
@@ -321,8 +403,8 @@ int main()
     // Inicializar orbs, enemies, projectiles
     for (int i = 0; i < MAX_ORBS; i++) {
         orbs[i].position = (Vector2){ -100000, -100000 };
-        orbs[i].radius = ORB_RADIUS  * radiusMultiplier;
-        orbs[i].color = (Color){ GetRandomValue(0, 255), GetRandomValue(0, 255), GetRandomValue(0, 255), 255 };
+        orbs[i].radius = ORB_RADIUS * radiusMultiplier;
+        orbs[i].color = (Color){ 30, 255, 30, 255 };
         orbs[i].enabled = false;
     }
     for (int i = 0; i < MAX_ENEMIES; i++) {
@@ -381,13 +463,29 @@ int main()
     SetTargetFPS(60);
 
     // Main game loop
-    while (!WindowShouldClose())    // Detect window close button or ESC key
+    while (!WindowShouldClose()) // Detect window close button or ESC key
     {
+        if (!nameEntered) {
+    BeginDrawing();
+    ClearBackground(BLACK);
+    GetPlayerNameInput();
+    EndDrawing();
+    continue;
+}
+
         UpdateDrawFrame();
     }
+    for (int i = 0; i < MAX_BG_FRAMES; i++) {
+    UnloadTexture(bgFrames[i]);
+}
+UnloadPlayerAnimation(&player.idle);
+UnloadPlayerAnimation(&player.walkUp);
+UnloadPlayerAnimation(&player.walkDown);
+UnloadPlayerAnimation(&player.walkLeft);
+UnloadPlayerAnimation(&player.walkRight);
 
-    CloseWindow();                  // Close window and OpenGL context
-    CloseAudioDevice();           // Close audio device
+    CloseWindow(); // Close window and OpenGL context
+    CloseAudioDevice(); // Close audio device
     UnloadMusicStream(music); // Unload music stream
     UnloadTexture(noiseTexture); // Unload texture
     UnloadTexture(crosshair);
@@ -397,15 +495,61 @@ int main()
 
     return 0;
 }
+void LoadPlayerAnimation(PlayerAnimation *anim, const char *pathFormat, int frameCount) {
+    anim->frameCount = frameCount;
+    anim->currentFrame = 0;
+    anim->elapsedTime = 0.0f;
+    anim->active = true;
+
+    for (int i = 0; i < frameCount; i++) {
+        const char *path = TextFormat(pathFormat, i + 1);
+        printf("Intentando cargar: %s\n", path);
+
+        Texture2D tex = LoadTexture(path);
+if (tex.id == 0) {
+    TraceLog(LOG_ERROR, "Fallo al cargar textura: %s", path);
+    Image fallback = GenImageColor(64, 64, WHITE);
+    anim->frames[i] = LoadTextureFromImage(fallback);
+    UnloadImage(fallback);
+} else {
+    anim->frames[i] = tex;
+}
+}
+}
+
+
+void UnloadPlayerAnimation(PlayerAnimation *anim) {
+    for (int i = 0; i < anim->frameCount; i++) {
+        UnloadTexture(anim->frames[i]);
+    }
+}
 
 // Update and draw game frame
 static void UpdateDrawFrame(void)
 {
-    // Update
-    //----------------------------------------------------------------------------------
+    static float resucitarCooldown = 0.0f;
+    static bool winScreen = false;
+
+    // Cooldown visual tras resurrección
+    if (resurrected && resucitarCooldown < 0.5f) {
+        resucitarCooldown += GetFrameTime();
+        return;
+    } else if (resucitarCooldown >= 0.5f) {
+        resucitarCooldown = 0.0f;
+        resurrected = false;
+    }
+
+    if (!menuActive && !deathScreen && !winScreen && !resurrected) {
+    totalGameTime += GetFrameTime();
+    if (totalGameTime >= 120.0f) {
+        winScreen = true;
+        menuActive = true;
+    }
+}
+
+
     camera.target = (Vector2){ player.position.x, player.position.y };
     Vector2 direction = (Vector2){ 0, 0 };
-    
     mousePosition = GetMousePosition();
     UpdateMusicStream(music);
 
@@ -413,18 +557,31 @@ static void UpdateDrawFrame(void)
         deathScreen = true;
         menuActive = true;
     }
+
     if(player.experience >= player.level * 10) {
-        player.level += 1;
-        player.experience = 0;
+    player.level += 1;
+    player.experience = 0;
+
+    // Verifica si aún quedan habilidades disponibles
+    int habilidadesDisponibles = 0;
+    for (int i = 0; i < 14; i++) {
+        if (!getskillStatus(i)) {
+            if (i == IMAN_DE_ORBES && imanDeOrbesCount >= 3) continue;
+            habilidadesDisponibles++;
+        }
+    }
+
+    if (habilidadesDisponibles > 0) {
         upgradeMenu = true;
         menuActive = true;
     }
+}
+
 
     // Timers
     timeSinceLastClick += GetFrameTime();
-    totalGameTime += GetFrameTime();
     timer += GetFrameTime();
-    SpawnTimer += GetFrameTime() * (2.5f * log(0.8f * totalGameTime/60.0f + 1.0f) + 1.0f);
+SpawnTimer += GetFrameTime() * (1.5f + totalGameTime * 0.3f);
     
     if (timer >= 0.5f && hasAliado) {
         timer = 0.0f;
@@ -432,7 +589,7 @@ static void UpdateDrawFrame(void)
     }
 
     // Spawner
-    if (SpawnTimer >= 1.0f && !menuActive) {
+    if (SpawnTimer >= 2.0f && !menuActive) {
         int enemies_to_spawn = (int)SpawnTimer;
         SpawnTimer -= enemies_to_spawn;
         
@@ -455,10 +612,12 @@ static void UpdateDrawFrame(void)
     }
 
     // Iman Upgrade
-    if (hasImanDeOrbes) {
-        radiusMultiplier += radiusMultiplier*0.25f;
-        hasImanDeOrbes = false;
-    }
+    if (hasImanDeOrbes && imanDeOrbesCount < 3) {
+    radiusMultiplier += radiusMultiplier * 0.25f;
+    imanDeOrbesCount++;
+    hasImanDeOrbes = false;
+}
+
     for (int i = 0; i < MAX_ORBS; i++) {
         orbs[i].radius = ORB_RADIUS * radiusMultiplier;
     }
@@ -494,11 +653,27 @@ static void UpdateDrawFrame(void)
             projectilesCount++;
         }
     }
+    
+if (hasDisparoRapido && !disparoRapidoAplicado) {
+    shootVelocity += shootVelocity * 0.25f;
+    disparoRapidoAplicado = true;
+}
 
-    if(hasDisparoRapido){
-        shootVelocity += shootVelocity*0.25f;
-        hasDisparoRapido = false;
-    }
+
+   // Disparo Mejorado
+if (hasDisparoMejorado && !disparoMejoradoAplicado) {
+    currentDamage += currentDamage * 0.20f;
+    player.damage = currentDamage;
+    disparoMejoradoAplicado = true;
+}
+// Movimiento Ágil
+if (hasMovimientoAgil && !movimientoAgilAplicado) {
+    currentSpeed += currentSpeed * 0.20f;
+    player.speed = currentSpeed;
+    movimientoAgilAplicado = true;
+}
+
+
 
     if(IsKeyPressed(KEY_GRAVE)){
         debug = !debug;
@@ -540,14 +715,61 @@ static void UpdateDrawFrame(void)
     //----------------------------------------------------------------------------------
     BeginDrawing();
     BeginMode2D(camera);
-        ClearBackground(AzulOscuro);
+
+    // Dibujo del fondo animado
+    bgElapsedTime += GetFrameTime();
+    if (bgElapsedTime >= 0.05f) {
+        currentBgFrame++;
+        if (currentBgFrame >= MAX_BG_FRAMES) currentBgFrame = 0;
+        bgElapsedTime = 0.0f;
+    }
+    DrawTexturePro(
+        bgFrames[currentBgFrame],
+        (Rectangle){ 0, 0, (float)bgFrames[currentBgFrame].width, (float)bgFrames[currentBgFrame].height },
+        (Rectangle){ player.position.x - GetScreenWidth() / 2, player.position.y - GetScreenHeight() / 2, (float)GetScreenWidth(), (float)GetScreenHeight() },
+        (Vector2){ 0, 0 }, 0.0f, (Color){ 120, 120, 120, 70 });
+
+    ClearBackground((Color) { 10, 12, 20, 255 });
+
 
         //Player
-        DrawRectangleRounded((Rectangle){ player.position.x - 10.0f, player.position.y - 20.0f, 20, 40 }, 1.0f, 10, Naranja);
+      // DrawRectangleRounded((Rectangle){ player.position.x - 10.0f, player.position.y - 20.0f, 20, 40 }, 1.0f, 10, Naranja);
         if(debug) DrawRing((Vector2){ player.position.x, player.position.y }, player.radius - 2, player.radius, 0, 360, 32, VerdeOscuro);
+        PlayerAnimation *currentAnim = &player.idle;
+        bool flipHorizontal = false;
+
         DrawOrbs(orbs, MAX_ORBS);
         DrawEnemies(enemies, MAX_ENEMIES);
         DrawProjectiles(projectiles, MAX_PROJECTILES);
+
+        if (IsKeyDown(KEY_W)) currentAnim = &player.walkUp;
+        else if (IsKeyDown(KEY_S)) currentAnim = &player.walkDown;
+        else if (IsKeyDown(KEY_D)) {
+            currentAnim = &player.walkRight;
+            flipHorizontal = false;
+        }
+        else if (IsKeyDown(KEY_A)) {
+            currentAnim = &player.walkRight;
+            flipHorizontal = true;
+        }
+        else currentAnim = &player.idle;
+
+
+        UpdatePlayerAnimation(currentAnim, 0.1f); // velocidad de animación
+        Rectangle sourceRec = {
+            0, 0,
+            currentAnim->frames[currentAnim->currentFrame].width * (flipHorizontal ? -1 : 1),
+            currentAnim->frames[currentAnim->currentFrame].height
+        };
+
+        DrawTexturePro(
+            currentAnim->frames[currentAnim->currentFrame],
+            sourceRec,
+            (Rectangle){ player.position.x - 32, player.position.y - 32, 64, 64 },
+            (Vector2){ 0, 0 },
+            0.0f,
+            WHITE
+        );
 
         if(!menuActive) {
             UpdateProjectiles(projectiles, MAX_PROJECTILES);
@@ -635,7 +857,7 @@ static void UpdateDrawFrame(void)
         Fade(WHITE, 0.15f)
     );
     
-    DrawTexture(crosshair, mousePosition.x - crosshair.width/2, mousePosition.y - crosshair.height/2, RojoOscuro);
+    DrawTextureEx(crosshair, (Vector2) { mousePosition.x - crosshair.width/2, mousePosition.y - crosshair.height/2 }, 0.0f, 1.6f, BLUE);
     if(debug) DrawDebugInfo();
 
     // Death screen
@@ -646,38 +868,69 @@ static void UpdateDrawFrame(void)
         DrawText("Press R to respawn", GetScreenWidth()/2 - MeasureText("Press R to respawn", 20)/2, GetScreenHeight()/2 - 200 + 60, 20, AzulOscuro);
         DrawText(TextFormat("Enemigos eliminados: %d", enemiesKilled), GetScreenWidth()/2 - 150, GetScreenHeight()/2 - 200 + 120, 20, AzulOscuro);
         DrawText(TextFormat("Orbes recogidos: %d", orbsCollected), GetScreenWidth()/2 - 150, GetScreenHeight()/2 - 200 + 150, 20, AzulOscuro);
-        DrawText(TextFormat("Proyectiles disparados: %d", projectilesFired), GetScreenWidth()/2 - 150, GetScreenHeight()/2 - 200 + 180, 20, AzulOscuro);
-        DrawText(TextFormat("Proyectiles acertados: %d", projectilesHit), GetScreenWidth()/2 - 150, GetScreenHeight()/2 - 200 + 210, 20, AzulOscuro);
         if (IsKeyPressed(KEY_R)) {
-            deathScreen = false;
-            player.position = (Vector2){ 0, 0 };
-            player.health = 5;
-            player.maxHealth = 5;
-            player.level = 1;
-            player.experience = 0;
-            for(int i=0; i < MAX_ENEMIES; i++) {
-                enemies[i].enabled = false;
-                enemies[i].position = (Vector2){ -100000, -100000 };
-            }
-            for(int i=0; i < MAX_PROJECTILES; i++) {
-                projectiles[i].enabled = false;
-                projectiles[i].position = (Vector2){ -100000, -100000 };
-            }
-            for(int i=0; i < MAX_ORBS; i++) {
-                orbs[i].enabled = false;
-                orbs[i].position = (Vector2){ -100000, -100000 };
-            }
-            enemiesCount = 0;
-            projectilesCount = 0;
-            orbsCount = 0;
-            upgradeMenu = false;
-            menuActive = false;
-        }
+    winScreen = false;
+    deathScreen = false;
+    menuActive = false;
+    ResetGameState(); // solo reinicia la partida, NO pide nombre
+}
+
     }
+  if(winScreen) {
+    DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(WHITE, 0.5f));
+    DrawRectangleRounded((Rectangle){ GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 250, 400, 500 }, 0.1f, 10, VerdeOscuro);
+
+    // Título de victoria
+    DrawText("YOU WIN!", GetScreenWidth()/2 - MeasureText("YOU WIN!", 30)/2, GetScreenHeight()/2 - 230, 30, AzulOscuro);
+
+    // Mensaje informativo
+    DrawText("¡Has sobrevivido 2 minutos!", GetScreenWidth()/2 - MeasureText("¡Has sobrevivido 2 minutos!", 20)/2, GetScreenHeight()/2 - 190, 20, AzulOscuro);
+    DrawText("Presiona R para reiniciar", GetScreenWidth()/2 - MeasureText("Presiona R para reiniciar", 20)/2, GetScreenHeight()/2 - 160, 20, AzulOscuro);
+
+    // Guardar y cargar tabla solo UNA vez
+    static bool scoreGuardado = false;
+    if (!scoreGuardado) {
+        SaveScore(playerName, enemiesKilled);
+        LoadScores();
+        scoreGuardado = true;
+    }
+
+    // Título del leaderboard
+    DrawText("CLASIFICACIÓN", GetScreenWidth()/2 - MeasureText("CLASIFICACIÓN", 20)/2, GetScreenHeight()/2 - 120, 20, BLACK);
+
+    // Dibujar leaderboard más abajo
+    DrawLeaderboard();
+    // En UpdateDrawFrame(), en bloque winScreen:
+if (IsKeyPressed(KEY_R)) {
+    winScreen = false;
+    deathScreen = false;
+    menuActive = false;
+    ResetGameStateFull(); // pide nombre otra vez
+}
+
+
+
+    }
+    int minutes = (int)(totalGameTime / 60);
+int seconds = (int)totalGameTime % 60;
+DrawText(TextFormat("Tiempo: %02d:%02d", minutes, seconds), GetScreenWidth() - 160, 10, 20, WHITE);
+DrawText(TextFormat("Kills: %d", enemiesKilled), GetScreenWidth() - 160, 35, 20, WHITE);
+
 
     EndDrawing();
     //----------------------------------------------------------------------------------
 }
+void UpdatePlayerAnimation(PlayerAnimation *anim, float frameDelay) {
+    anim->elapsedTime += GetFrameTime();
+    if (anim->elapsedTime >= frameDelay) {
+        anim->currentFrame++;
+        anim->elapsedTime = 0.0f;
+        if (anim->currentFrame >= anim->frameCount) {
+            anim->currentFrame = 0;
+        }
+    }
+}
+
 
 void GenOrbs(Vector2 position, int amount) {
     if(orbsCount >= MAX_ORBS) {
@@ -690,7 +943,7 @@ void GenOrbs(Vector2 position, int amount) {
             position.y += distance
         };
         orbs[i].radius = ORB_RADIUS * radiusMultiplier;
-        orbs[i].color = (Color){ GetRandomValue(0, 255), GetRandomValue(0, 255), GetRandomValue(0, 255), 255 };
+        orbs[i].color = (Color){ 30, 255, 30, 255 };
         orbs[i].enabled = true;
     }
 }
@@ -703,8 +956,8 @@ void GenEnemies(Vector2 position, int amount) {
             position.y += distance
         };
         enemies[i].radius = ENEMY_RADIUS;
-        enemies[i].health = 30;
-        enemies[i].maxHealth = 30;
+        enemies[i].health = 20;
+        enemies[i].maxHealth = 20;
         enemies[i].speed = 1.35f;
         enemies[i].enabled = true;
     }
@@ -736,18 +989,31 @@ void DrawOrbs(Orb *orbs, int amount) {
 void DrawEnemies(Enemy *enemies, int amount) {
     for (int i = 0; i < amount; i++) {
         if(enemies[i].enabled){
-            startAnimation(demAnim, enemies[i].position, WHITE, demAnimCount, 2.5f);
-            demAnimCount++;
-            if(debug) DrawRing((Vector2){ enemies[i].position.x, enemies[i].position.y }, enemies[i].radius-2, enemies[i].radius, 0, 360, 32, VerdeOscuro);
-            if(debug) DrawRectangle(enemies[i].position.x - 10.0f, enemies[i].position.y - 20.0f, (enemies[i].health/enemies[i].maxHealth) * 20, 5, RojoOscuro);
+            
+            // Solo iniciar la animación si no estaba activa
+            if (!demAnim[i].active) {
+                startAnimationWithTextures(&demAnim[i], enemies[i].position, WHITE, dem, 8, 2.5f);
+            }
+
+            // Actualizar la posición del sprite animado
+            demAnim[i].position = enemies[i].position;
+
+            // Actualizar y dibujar la animación
+            UpdateAnimation(&demAnim[i]);
+
+            // DEBUG visuales
+            if(debug) DrawRing(enemies[i].position, enemies[i].radius - 2, enemies[i].radius, 0, 360, 32, VerdeOscuro);
+            if(debug) DrawRectangle(enemies[i].position.x - 10.0f, enemies[i].position.y - 20.0f,
+                                     (enemies[i].health / enemies[i].maxHealth) * 20, 5, RojoOscuro);
         }
     }
 }
 
+
 void DrawProjectiles(Projectile *projectiles, int amount) {
     for (int i = 0; i < amount; i++) {
         if(projectiles[i].enabled){
-            DrawTexture(bullet, projectiles[i].position.x - bullet.width/2, projectiles[i].position.y - bullet.height/2, Amarillo);
+            DrawTexture(bullet, projectiles[i].position.x - bullet.width/2, projectiles[i].position.y - bullet.height/2, Bullet );
             }
             if(debug) DrawRing((Vector2){ projectiles[i].position.x, projectiles[i].position.y }, (projectiles[i].radius*corazonFracturadoMultiplier)-2, projectiles[i].radius*corazonFracturadoMultiplier, 0, 360, 32, VerdeOscuro);
     }
@@ -808,7 +1074,7 @@ void ProjectileCollision(Projectile *projectiles, Enemy *enemies) {
                 if(CheckCollisionCircles(projectiles[i].position, projectiles[i].radius, enemies[j].position, enemies[j].radius)){
                         // Corazon fracturado
                         if(hasCorazonFracturado && player.health <= 1) {
-                            startAnimation(explotionAnim, projectiles[i].position, BLUE, explotionAnimCount, 2.0f);
+                            startAnimation(explotionAnim, projectiles[i].position, BLUE, 6, 2.0f);
                             explotionAnimCount++;
                             for (int k = 0; k < MAX_ENEMIES; k++) {
                                 if(enemies[k].enabled){
@@ -836,7 +1102,7 @@ void EnemyTakeDamage(Enemy *enemy, int damage){
         GenOrbs(enemy->position, 1);
         orbsCount += 1;
         orbsCollected++;
-        startEnemyAnimation(enemy->position, Amarillo);
+        startEnemyAnimation(enemy->position, Amarillo,6);
         enemyAnimationsCount++;
         if(hasAlmasErrantes) {
             GenProjectiles(enemy->position, Vector2Add(enemy->position, (Vector2){ cosf(30 * DEG2RAD), sinf(30 * DEG2RAD) }), 1);
@@ -849,38 +1115,78 @@ void EnemyTakeDamage(Enemy *enemy, int damage){
         enemy->position = (Vector2){ -100000, -100000 };
     }
 }
-
 void PlayerTakeDamage(int damage, Enemy *enemies) {
     PushEnemiesAway(enemies);
     player.health -= damage;
-    for(int i=0; i<=MAX_ENEMIES; i++){
-        if(enemies[i].enabled && hasExplosion && CheckCollisionCircles(player.position, player.radius*explotionRadius, enemies[i].position, enemies[i].radius)){
-            startAnimation(explotionAnim, player.position, BLUE, explotionAnimCount, 2.5f);
+
+    for(int i = 0; i < MAX_ENEMIES; i++) {
+        if(enemies[i].enabled && hasExplosion &&
+            CheckCollisionCircles(player.position, player.radius * explotionRadius, enemies[i].position, enemies[i].radius)) {
+            startAnimation(explotionAnim, player.position, BLUE, 6, 2.5f);
             EnemyTakeDamage(&enemies[i], explotionDamage);
         }
     }
+
     if (player.health <= 0) {
         player.health = 0;
+
         // Resucitar al jugador
-        if(hasResurrect && !resurrected) {
+        if (hasResurrect && !resurrected) {
             player.health++;
-            singleAnimation(&lotusAnimation, lotus, player.position, GREEN, 1, 1.6f);
+            player.position = (Vector2){ 0, 0 };
+            camera.target = player.position;
+            currentAnim = &player.idle;
+            player.idle.currentFrame = 0;
+            player.idle.elapsedTime = 0.0f;
+
+            // Limpia TODAS las animaciones visuales
+            for (int i = 0; i < MAX_ANIMATIONS; i++) {
+                enemyAnimations[i].active = false;
+                enemyAnimations[i].currentFrame = 0;
+                enemyAnimations[i].position = (Vector2){ -100000, -100000 };
+
+                explotionAnim[i].active = false;
+                explotionAnim[i].currentFrame = 0;
+                explotionAnim[i].position = (Vector2){ -100000, -100000 };
+            }
+
+            for (int i = 0; i < MAX_ENEMIES; i++) {
+                demAnim[i].active = false;
+                demAnim[i].currentFrame = 0;
+                demAnim[i].position = (Vector2){ -100000, -100000 };
+            }
+
+            lotusAnimation.active = false;
+            lotusAnimation.currentFrame = 0;
+            lotusAnimation.position = (Vector2){ -100000, -100000 };
+
+            // Animación visual de resurrección
+            singleAnimation(&lotusAnimation, lotus, player.position, GREEN, 12, 1.6f);
             resurrected = true;
-            for(int i=0; i < MAX_ENEMIES; i++) {
+
+            // Limpiar enemigos, proyectiles y orbes
+            for (int i = 0; i < MAX_ENEMIES; i++) {
                 enemies[i].enabled = false;
                 enemies[i].position = (Vector2){ -100000, -100000 };
             }
-            for(int i=0; i < MAX_PROJECTILES; i++) {
+            for (int i = 0; i < MAX_PROJECTILES; i++) {
                 projectiles[i].enabled = false;
                 projectiles[i].position = (Vector2){ -100000, -100000 };
             }
+            for (int i = 0; i < MAX_ORBS; i++) {
+                orbs[i].enabled = false;
+                orbs[i].position = (Vector2){ -100000, -100000 };
+            }
+
             enemiesCount = 0;
             projectilesCount = 0;
+            orbsCount = 0;
             upgradeMenu = false;
             menuActive = false;
         }
     }
 }
+
 
 void PushEnemiesAway(Enemy *enemies) {
     for (int i = 0; i < MAX_ENEMIES; i++) {
@@ -901,13 +1207,17 @@ void enemiesSpawn(Enemy *enemies) {
         float x, y;
         do {
             x = GetRandomValue(player.position.x - 2000, player.position.x + 2000);
-        } while (x >= player.position.x-700 && x <= player.position.x+700);
+        } while (x >= player.position.x - 700 && x <= player.position.x + 700);
 
         do {
             y = GetRandomValue(player.position.y - 2000, player.position.y + 2000);
-        } while (y >= player.position.y-700 && y <= player.position.y+700);
+        } while (y >= player.position.y - 700 && y <= player.position.y + 700);
 
+        // Crear enemigo en la nueva posición
         GenEnemies((Vector2){ x, y }, 1);
+
+        // Iniciar la animación para el enemigo recién creado
+        startEnemyAnimation((Vector2){x, y}, WHITE, 6); // 6 es el número de frames para la animación del enemigo
     }
     if(enemiesCount >= MAX_ENEMIES) {
         enemiesCount = 0;
@@ -934,7 +1244,7 @@ void enemyTrigger(Enemy *enemies, Vector2 position) {
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if(enemies[i].enabled){
             if(CheckCollisionCircles(position, 10.0f, enemies[i].position, enemies[i].radius)){
-                EnemyTakeDamage(&enemies[i], abilityDamage*abilityMultiplier);
+                EnemyTakeDamage(&enemies[i], skillDamage*skillMultiplier);
             }
         }
     }
@@ -964,8 +1274,8 @@ void ally(Enemy *enemies) {
     }
 }
 
-void setAbilityStatus(int abilityIndex, bool status) {
-    switch (abilityIndex) {
+void setskillStatus(int skillIndex, bool status) {
+    switch (skillIndex) {
         case 0: hasResurrect = status; break;
         case 1: hasDisparoMejorado = status; break;
         case 2: hasMovimientoAgil = status; break;
@@ -984,8 +1294,8 @@ void setAbilityStatus(int abilityIndex, bool status) {
     }
 }
 
-bool getAbilityStatus(int abilityIndex) {
-    switch (abilityIndex) {
+bool getskillStatus(int skillIndex) {
+    switch (skillIndex) {
         case 0: return hasResurrect;
         case 1: return hasDisparoMejorado;
         case 2: return hasMovimientoAgil;
@@ -1036,10 +1346,7 @@ void UpdateDrawAnimations(Animation *animations, int amount, Texture2D textures[
     }
 }
 
-void startEnemyAnimation(Vector2 position, Color tint) {
-    if(enemyAnimationsCount >= MAX_ANIMATIONS) {
-        enemyAnimationsCount = 0;
-    }
+void startEnemyAnimation(Vector2 position, Color tint, int frameCount) {
     for (int i = 0; i < MAX_ANIMATIONS; i++) {
         if (!enemyAnimations[i].active) {
             enemyAnimations[i].position = position;
@@ -1048,6 +1355,26 @@ void startEnemyAnimation(Vector2 position, Color tint) {
             enemyAnimations[i].active = true;
             enemyAnimations[i].tint = tint;
             enemyAnimations[i].size = 1.0f;
+            enemyAnimations[i].frames = frameCount;
+            break; // IMPORTANTE: sal de la funcion al asignar
+        }
+    }
+}
+
+void startAnimationWithTextures(Animation *animations, Vector2 position, Color tint, Texture2D textures[], int frameCount, float size) {
+    for (int i = 0; i < MAX_ANIMATIONS; i++) {
+        if (!animations[i].active) {
+            for (int j = 0; j < frameCount; j++) {
+                animations[i].textures[j] = textures[j];
+            }
+            animations[i].frames = frameCount;
+            animations[i].position = position;
+            animations[i].currentFrame = 0;
+            animations[i].elapsedTime = 0.0f;
+            animations[i].active = true;
+            animations[i].tint = tint;
+            animations[i].size = size;
+            break;
         }
     }
 }
@@ -1064,38 +1391,47 @@ void startAnimation(Animation *animations, Vector2 position, Color tint, int cou
             animations[i].active = true;
             animations[i].tint = tint;
             animations[i].size = size;
+            break;
         }
     }
 }
 
-void UpdateAnimation(Animation *animation){
+void UpdateAnimation(Animation *animation) {
     if (animation->active) {
         animation->elapsedTime += GetFrameTime();
-        
+
         if (animation->elapsedTime >= 0.03f) {
             animation->currentFrame++;
             animation->elapsedTime = 0.0f;
-            
+
+            // Cuando termine la animación, desactivarla completamente
             if (animation->currentFrame >= animation->frames) {
                 animation->active = false;
                 animation->currentFrame = 0;
+                animation->position = (Vector2){ -100000, -100000 }; // mover fuera del mapa
+                return; // ya no dibujar si terminó
             }
         }
 
         DrawTextureEx(animation->textures[animation->currentFrame],
-            (Vector2){animation->position.x - (animation->textures[animation->currentFrame].width*animation->size) / 2, 
-            animation->position.y - (animation->textures[animation->currentFrame].height*animation->size) / 2}, 
+            (Vector2){
+                animation->position.x - (animation->textures[animation->currentFrame].width * animation->size) / 2,
+                animation->position.y - (animation->textures[animation->currentFrame].height * animation->size) / 2
+            },
             0.0f,
             animation->size,
             animation->tint);
     }
 }
 
-void singleAnimation(Animation *animation, Texture2D textures[], Vector2 position, Color tint, int count, float size) {
+
+
+void singleAnimation(Animation *animation, Texture2D textures[], Vector2 position, Color tint, int frameCount, float size) {
     if(!animation->active){
-        for(int i=0; i<32; i++){
+        for(int i = 0; i < frameCount; i++){
             animation->textures[i] = textures[i];
         }
+        animation->frames = frameCount; 
         animation->position = position;
         animation->currentFrame = 0;
         animation->elapsedTime = 0.0f;
@@ -1110,112 +1446,111 @@ void enableUpgradeMenu() {
     DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Fade(WHITE, 0.5f));
     DrawRectangleRounded((Rectangle){ GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 250, 400, 500 }, 0.02f, 10, Amarillo);
     DrawTexture(uiCorner, GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 250, Amarillo);
-    DrawTexturePro(uiCorner, 
-        (Rectangle){ 0, 0, (float)uiCorner.width, (float)uiCorner.height }, 
-        (Rectangle){ GetScreenWidth()/2 + 200, GetScreenHeight()/2 - 250, (float)uiCorner.width, (float)uiCorner.height }, 
-        (Vector2){ 0, 0 }, 
-        90.0f, 
-        Amarillo);
-    DrawTexturePro(uiCorner, 
-        (Rectangle){ 0, 0, (float)uiCorner.width, (float)uiCorner.height }, 
-        (Rectangle){ GetScreenWidth()/2 + 200, GetScreenHeight()/2 + 250, (float)uiCorner.width, (float)uiCorner.height }, 
-        (Vector2){ 0, 0 }, 
-        180.0f, 
-        Amarillo);
-    DrawTexturePro(uiCorner, 
-        (Rectangle){ 0, 0, (float)uiCorner.width, (float)uiCorner.height }, 
-        (Rectangle){ GetScreenWidth()/2 - 200, GetScreenHeight()/2 + 250, (float)uiCorner.width, (float)uiCorner.height }, 
-        (Vector2){ 0, 0 }, 
-        270.0f, 
-        Amarillo);
+    DrawTexturePro(uiCorner, (Rectangle){ 0, 0, (float)uiCorner.width, (float)uiCorner.height },
+                   (Rectangle){ GetScreenWidth()/2 + 200, GetScreenHeight()/2 - 250, (float)uiCorner.width, (float)uiCorner.height },
+                   (Vector2){ 0, 0 }, 90.0f, Amarillo);
+    DrawTexturePro(uiCorner, (Rectangle){ 0, 0, (float)uiCorner.width, (float)uiCorner.height },
+                   (Rectangle){ GetScreenWidth()/2 + 200, GetScreenHeight()/2 + 250, (float)uiCorner.width, (float)uiCorner.height },
+                   (Vector2){ 0, 0 }, 180.0f, Amarillo);
+    DrawTexturePro(uiCorner, (Rectangle){ 0, 0, (float)uiCorner.width, (float)uiCorner.height },
+                   (Rectangle){ GetScreenWidth()/2 - 200, GetScreenHeight()/2 + 250, (float)uiCorner.width, (float)uiCorner.height },
+                   (Vector2){ 0, 0 }, 270.0f, Amarillo);
     DrawText("UPGRADE MENU", GetScreenWidth()/2 - MeasureText("UPGRADE MENU", 20)/2, GetScreenHeight()/2 - 200 + 20, 20, AzulOscuro);
 
-    Rectangle ability1 = { GetScreenWidth()/2 - 180, GetScreenHeight()/2 - 150, 360, 80 };
-    Rectangle ability2 = { GetScreenWidth()/2 - 180, GetScreenHeight()/2 - 50, 360, 80 };
-    Rectangle ability3 = { GetScreenWidth()/2 - 180, GetScreenHeight()/2 + 50, 360, 80 };
+    Rectangle skillRects[3] = {
+        { GetScreenWidth()/2 - 180, GetScreenHeight()/2 - 150, 360, 80 },
+        { GetScreenWidth()/2 - 180, GetScreenHeight()/2 - 50, 360, 80 },
+        { GetScreenWidth()/2 - 180, GetScreenHeight()/2 + 50, 360, 80 }
+    };
 
     Rectangle cancelButton = { GetScreenWidth()/2 - 180, GetScreenHeight()/2 + 160, 160, 40 };
     Rectangle acceptButton = { GetScreenWidth()/2 + 20, GetScreenHeight()/2 + 160, 160, 40 };
 
-    if(!selectedIndex){
-        int availableAbilities[18];
+    if (!selectedIndex) {
+        int availableskills[18];
         int availableCount = 0;
-
-        for (int i = 0; i < 18; i++) {
-            if (!getAbilityStatus(i)) {
-                availableAbilities[availableCount++] = i;
+        for (int i = 0; i < 14; i++) {
+            if (!getskillStatus(i)) {
+                if (i == IMAN_DE_ORBES && imanDeOrbesCount >= 3) continue;
+                availableskills[availableCount++] = i;
             }
         }
 
-        if (availableCount < 3) {
-            selectedIndex = false; 
+        if (availableCount == 0) {
+            upgradeMenu = false;
+            menuActive = false;
+            selectedIndex = false;
             return;
         }
 
-        do {
-            index[0] = availableAbilities[GetRandomValue(0, availableCount - 1)];
-            index[1] = availableAbilities[GetRandomValue(0, availableCount - 1)];
-            index[2] = availableAbilities[GetRandomValue(0, availableCount - 1)];
-        } while (index[0] == index[1] || index[0] == index[2] || index[1] == index[2]);
+        int opcionesAMostrar = (availableCount < 3) ? availableCount : 3;
+        index[0] = index[1] = index[2] = -1;
+
+        for (int i = 0; i < opcionesAMostrar; ) {
+    int rnd = GetRandomValue(0, availableCount - 1);
+    int habilidad = availableskills[rnd];
+
+    // Verifica si ya fue seleccionada en esta tanda
+    bool repetida = false;
+    for (int j = 0; j < i; j++) {
+        if (index[j] == habilidad) {
+            repetida = true;
+            break;
+        }
+    }
+
+    if (!repetida) {
+        index[i] = habilidad;
+        i++;
+    }
+}
+
 
         selectedIndex = true;
     }
 
-    DrawRectangleRounded(ability1, 0.1f, 10, WHITE);
-    DrawRectangleRounded(ability2, 0.1f, 10, WHITE);
-    DrawRectangleRounded(ability3, 0.1f, 10, WHITE);
+    // Dibujar tarjetas solo si la habilidad es válida
+    for (int i = 0; i < 3; i++) {
+        if (index[i] >= 0) {
+            DrawRectangleRounded(skillRects[i], 0.1f, 10, WHITE);
+            if (selectedskill == i) {
+                DrawRectangleLines(skillRects[i].x, skillRects[i].y, skillRects[i].width, skillRects[i].height, AzulOscuro);
+            }
 
-    switch (selectedAbility) {
-    case 0:
-        DrawRectangleLines(ability1.x, ability1.y, ability1.width, ability1.height, AzulOscuro);
-        break;
-    case 1:
-        DrawRectangleLines(ability2.x, ability2.y, ability2.width, ability2.height, AzulOscuro);
-        break;
-    case 2:
-        DrawRectangleLines(ability3.x, ability3.y, ability3.width, ability3.height, AzulOscuro);
-        break;
+            Color color = (i == 0) ? RojoOscuro : (i == 1) ? VerdeOscuro : AzulOscuro;
+            DrawRectangle(skillRects[i].x + 10, skillRects[i].y + 10, 60, 60, color);
+            DrawText(skills[index[i]].name, skillRects[i].x + 80, skillRects[i].y + 10, 20, AzulOscuro);
+            DrawText(skills[index[i]].description, skillRects[i].x + 80, skillRects[i].y + 40, 16, AzulOscuro);
+        }
     }
-
-    DrawRectangle(ability1.x + 10, ability1.y + 10, 60, 60, RojoOscuro);
-    DrawRectangle(ability2.x + 10, ability2.y + 10, 60, 60, VerdeOscuro);
-    DrawRectangle(ability3.x + 10, ability3.y + 10, 60, 60, AzulOscuro);
-
-    DrawText(TextFormat("%s", abilities[index[0]].name), ability1.x + 80, ability1.y + 10, 20, AzulOscuro);
-    DrawText(TextFormat("%s", abilities[index[0]].description), ability1.x + 80, ability1.y + 40, 16, AzulOscuro);
-
-    DrawText(TextFormat("%s", abilities[index[1]].name), ability2.x + 80, ability2.y + 10, 20, AzulOscuro);
-    DrawText(TextFormat("%s", abilities[index[1]].description), ability2.x + 80, ability2.y + 40, 16, AzulOscuro);
-
-    DrawText(TextFormat("%s", abilities[index[2]].name), ability3.x + 80, ability3.y + 10, 20, AzulOscuro);
-    DrawText(TextFormat("%s", abilities[index[2]].description), ability3.x + 80, ability3.y + 40, 16, AzulOscuro);
 
     DrawRectangleRounded(cancelButton, 0.1f, 10, Naranja);
     DrawRectangleRounded(acceptButton, 0.1f, 10, VerdeOscuro);
-
     DrawText("Cancelar", cancelButton.x + 20, cancelButton.y + 10, 20, WHITE);
     DrawText("Aceptar", acceptButton.x + 20, acceptButton.y + 10, 20, WHITE);
 
     if (IsMouseButtonPressed(MOUSE_LEFT_BUTTON)) {
         Vector2 mouse = GetMousePosition();
-        if (CheckCollisionPointRec(mouse, ability1)) {
-            selectedAbility = 0;
-        } else if (CheckCollisionPointRec(mouse, ability2)) {
-            selectedAbility = 1;
-        } else if (CheckCollisionPointRec(mouse, ability3)) {
-            selectedAbility = 2;
-        } else if (CheckCollisionPointRec(mouse, cancelButton)) {
-            upgradeMenu = false; // Cancelar
+        for (int i = 0; i < 3; i++) {
+            if (index[i] >= 0 && CheckCollisionPointRec(mouse, skillRects[i])) {
+                selectedskill = i;
+            }
+        }
+
+        if (CheckCollisionPointRec(mouse, cancelButton)) {
+            upgradeMenu = false;
             menuActive = true;
             selectedIndex = false;
-            selectedAbility = 0;
+            selectedskill = 0;
         } else if (CheckCollisionPointRec(mouse, acceptButton)) {
             upgradeMenu = false;
             menuActive = true;
-            acquiredAbilities[selectedAbility] = abilities[index[selectedAbility]];
-            setAbilityStatus(index[selectedAbility], true); 
+            int id = index[selectedskill];
+            acquiredskills[selectedskill] = skills[id];
+            setskillStatus(id, true); 
+
             selectedIndex = false;
-            selectedAbility = 0;
+            selectedskill = 0;
         }
     }
 
@@ -1224,6 +1559,7 @@ void enableUpgradeMenu() {
         menuActive = false;
     }
 }
+
 
 void DrawDebugInfo(){
     DrawFPS(10, 10);
@@ -1239,8 +1575,185 @@ void DrawDebugInfo(){
     DrawText("HABILIDADES:", 10, yOffset, 20, Amarillo);
     yOffset += 30;
     for (int i = 0; i < 14; i++) {
-        Color abilityColor = getAbilityStatus(i) ? VerdeOscuro : RojoOscuro;
-        DrawRectangle(10, yOffset + i * 28, 18, 18, abilityColor);
-        DrawText(abilities[i].name, 35, yOffset + i * 28, 18, abilityColor);
+        Color skillColor = getskillStatus(i) ? VerdeOscuro : RojoOscuro;
+        DrawRectangle(10, yOffset + i * 28, 18, 18, skillColor);
+        DrawText(skills[i].name, 35, yOffset + i * 28, 18, skillColor);
+    }
+}
+void GetPlayerNameInput() {
+    DrawText("Ingresa tu nombre:", GetScreenWidth()/2 - 100, GetScreenHeight()/2 - 60, 20, WHITE);
+    DrawRectangle(GetScreenWidth()/2 - 150, GetScreenHeight()/2 - 20, 300, 40, WHITE);
+    DrawText(playerName, GetScreenWidth()/2 - 140, GetScreenHeight()/2 - 10, 20, BLACK);
+
+    int key = GetCharPressed();
+    while (key > 0) {
+        if ((key >= 32) && (key <= 125) && (strlen(playerName) < MAX_NAME_LENGTH - 1)) {
+            int len = strlen(playerName);
+            playerName[len] = (char)key;
+            playerName[len + 1] = '\0';
+        }
+        key = GetCharPressed();
+    }
+
+    if (IsKeyPressed(KEY_BACKSPACE)) {
+        int len = strlen(playerName);
+        if (len > 0) playerName[len - 1] = '\0';
+    }
+
+    if (IsKeyPressed(KEY_ENTER) && strlen(playerName) > 0) {
+        nameEntered = true;
+    }
+}
+void ResetGameState() {
+    // Reset estadísticas
+    player.position = (Vector2){ 0, 0 };
+    player.health = 5;
+    player.maxHealth = 5;
+    player.level = 1;
+    player.experience = 0;
+    totalGameTime = 0.0f;
+    enemiesKilled = 0;
+    orbsCollected = 0;
+    projectilesFired = 0;
+    projectilesHit = 0;
+
+    // Reiniciar habilidades
+    hasResurrect = false;
+    hasDisparoMejorado = false;
+    hasMovimientoAgil = false;
+    hasRegeneracion = false;
+    hasBifurcacion = false;
+    hasAliado = false;
+    hasTormentaDeBalas = false;
+    hasFuria = false;
+    hasExplosion = false;
+    hasImanDeOrbes = false;
+    hasDisparoRapido = false;
+    hasAlmasErrantes = false;
+    hasSierraGiratoria = false;
+    hasCorazonFracturado = false;
+    imanDeOrbesCount = 0;
+
+    shootVelocity = 1.0f;
+    currentSpeed = 2.0f;
+    currentDamage = 10;
+
+    // Limpiar entidades
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        enemies[i].enabled = false;
+        enemies[i].position = (Vector2){ -100000, -100000 };
+    }
+    for (int i = 0; i < MAX_PROJECTILES; i++) {
+        projectiles[i].enabled = false;
+        projectiles[i].position = (Vector2){ -100000, -100000 };
+    }
+    for (int i = 0; i < MAX_ORBS; i++) {
+        orbs[i].enabled = false;
+        orbs[i].position = (Vector2){ -100000, -100000 };
+    }
+    enemiesCount = 0;
+    projectilesCount = 0;
+    orbsCount = 0;
+
+    upgradeMenu = false;
+    menuActive = false;
+    selectedIndex = false;
+    selectedskill = 0;
+    extern bool scoreGuardado;
+    scoreGuardado = false;
+
+    // 🔧 REINICIAR LOS FLAGS DE MEJORAS APLICADAS
+    extern bool disparoRapidoAplicado;
+    extern bool disparoMejoradoAplicado;
+    extern bool movimientoAgilAplicado;
+
+    disparoRapidoAplicado = false;
+    disparoMejoradoAplicado = false;
+    movimientoAgilAplicado = false;
+}
+
+
+void ResetGameStateFull() {
+    playerName[0] = '\0';
+    nameEntered = false;
+
+    ResetGameState(); // Ya reinicia todo
+
+    enemiesKilled = 0;
+    orbsCollected = 0;
+    projectilesFired = 0;
+    projectilesHit = 0;
+}
+
+
+void SaveScore(const char *name, int kills) {
+    LoadScores();
+
+    // Buscar si el nombre ya existe
+    int existingIndex = -1;
+    for (int i = 0; i < leaderboardCount; i++) {
+        if (strcmp(leaderboard[i].name, name) == 0) {
+            existingIndex = i;
+            break;
+        }
+    }
+
+    if (existingIndex != -1) {
+        // Si ya existe, actualiza solo si es mejor score
+        if (kills > leaderboard[existingIndex].kills) {
+            leaderboard[existingIndex].kills = kills;
+        }
+    } else {
+        // Si no existe, agrégalo si hay espacio o reemplaza el peor score
+        if (leaderboardCount < MAX_SCORES) {
+            strcpy(leaderboard[leaderboardCount].name, name);
+            leaderboard[leaderboardCount].kills = kills;
+            leaderboardCount++;
+        } else {
+            int minIndex = 0;
+            for (int i = 1; i < leaderboardCount; i++) {
+                if (leaderboard[i].kills < leaderboard[minIndex].kills) {
+                    minIndex = i;
+                }
+            }
+            if (kills > leaderboard[minIndex].kills) {
+                strcpy(leaderboard[minIndex].name, name);
+                leaderboard[minIndex].kills = kills;
+            }
+        }
+    }
+
+    // Ordenar
+    for (int i = 0; i < leaderboardCount - 1; i++) {
+        for (int j = i + 1; j < leaderboardCount; j++) {
+            if (leaderboard[j].kills > leaderboard[i].kills) {
+                ScoreEntry temp = leaderboard[i];
+                leaderboard[i] = leaderboard[j];
+                leaderboard[j] = temp;
+            }
+        }
+    }
+
+    FILE *file = fopen("scores.dat", "wb");
+    if (file) {
+        fwrite(leaderboard, sizeof(ScoreEntry), leaderboardCount, file);
+        fclose(file);
+    }
+}
+
+void LoadScores() {
+    FILE *file = fopen("scores.dat", "rb");
+    if (file) {
+        leaderboardCount = fread(leaderboard, sizeof(ScoreEntry), MAX_SCORES, file);
+        fclose(file);
+    }
+}
+
+void DrawLeaderboard() {
+    DrawText("CLASIFICACIÓN", GetScreenWidth()/2 - MeasureText("CLASIFICACIÓN", 20)/2, GetScreenHeight()/2 - 50, 20, BLACK);
+    for (int i = 0; i < leaderboardCount; i++) {
+        char buffer[64];
+        snprintf(buffer, sizeof(buffer), "%d. %s - %d kills", i + 1, leaderboard[i].name, leaderboard[i].kills);
+        DrawText(buffer, GetScreenWidth()/2 - MeasureText(buffer, 18)/2, GetScreenHeight()/2 - 20 + i * 20, 18, BLACK);
     }
 }

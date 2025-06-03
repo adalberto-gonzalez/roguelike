@@ -132,7 +132,7 @@ RAYLIB_RELEASE_PATH 	?= $(RAYLIB_PATH)/src
 # EXAMPLE_RUNTIME_PATH embeds a custom runtime location of libraylib.so or other desired libraries
 # into each example binary compiled with RAYLIB_LIBTYPE=SHARED. It defaults to RAYLIB_RELEASE_PATH
 # so that these examples link at runtime with your version of libraylib.so in ../release/libs/linux
-# without formal installation from ../src/Makefile. It aids portability and is useful if you have
+# without formal installation from ../src/Makefile. It aids portskill and is useful if you have
 # multiple versions of raylib, have raylib installed to a non-standard location, or want to
 # bundle libraylib.so with your game. Change it to your liking.
 # NOTE: If, at runtime, there is a libraylib.so at both EXAMPLE_RUNTIME_PATH and RAYLIB_INSTALL_PATH,
