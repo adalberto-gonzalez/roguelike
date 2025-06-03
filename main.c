@@ -3,7 +3,6 @@
 #include <stdio.h>
 #include <string.h>
 
-
 #define MAX_ORBS 256
 #define ORB_RADIUS 70.0f
 #define MAX_ENEMIES 512
@@ -24,13 +23,13 @@ int currentBgFrame = 0;
 float bgElapsedTime = 0.0f;
 
 
-const Color Naranja = (Color){ 255, 111, 0, 255 };
-const Color RojoOscuro = (Color) { 198, 18, 0, 255 };
-const Color VerdeOscuro = (Color) { 44, 66, 55, 255 };
-const Color AzulOscuro = (Color) { 20, 30, 45, 255 };
-const Color Amarillo = (Color) { 255, 204, 0, 255 };
-const Color Bullet = (Color) { 255, 240, 0, 255 };
-const Color Crema = (Color) { 255, 240, 220, 255 };
+const Color Naranja = { 255, 111, 0, 255 };
+const Color RojoOscuro = { 198, 18, 0, 255 };
+const Color VerdeOscuro = { 44, 66, 55, 255 };
+const Color AzulOscuro = { 20, 30, 45, 255 };
+const Color Amarillo = { 255, 204, 0, 255 };
+const Color Bullet = { 255, 240, 0, 255 };
+const Color Crema = { 255, 240, 220, 255 };
 
 typedef struct PlayerAnimation {
     Texture2D frames[MAX_ANIM_FRAMES];  
@@ -114,7 +113,7 @@ int leaderboardCount = 0;
 Camera2D camera = { 0 };
 Player player = { 0 };
 Vector2 squarePosition = { 0 };
-Vector2 mousePosition = (Vector2){ 0 };
+Vector2 mousePosition = { 0 };
 Orb orbs[MAX_ORBS] = { 0 };
 int orbsCount = 0;
 Enemy enemies[MAX_ENEMIES] = { 0 };
@@ -254,9 +253,12 @@ void SaveScore(const char *name, int kills);
 void LoadScores();
 void DrawLeaderboard();
 void ResetGameState();
-
 void ResetGameStateFull();
 
+//----------------------------------------------------------------------------------
+// Ensamblador
+//----------------------------------------------------------------------------------
+extern void MiFuncionASM(void);
 
 //----------------------------------------------------------------------------------
 // Main
@@ -492,6 +494,8 @@ UnloadPlayerAnimation(&player.walkRight);
     UnloadTexture(uiCorner);
     UnloadTexture(healthBar);
     UnloadTexture(saw);
+
+    MiFuncionASM();
 
     return 0;
 }
